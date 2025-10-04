@@ -32,7 +32,7 @@ class TributePayment:
             "description": description,
             "currency": "RUB",
             "success_url": success_url or f"https://t.me/{config.BOT_USERNAME.replace('@', '')}",
-            "metadata": {
+            "payment_metadata": {
                 "telegram_id": str(telegram_id) if telegram_id else None
             }
         }
@@ -260,7 +260,7 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
             package_id=package['id'],
             coins=package['coins'],
             days=package.get('days', 0),
-            metadata=f'{{"type": "{package_type}"}}'
+            payment_metadata=f'{{"type": "{package_type}"}}'
         )
         session.add(payment)
         await session.commit()

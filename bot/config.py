@@ -5,7 +5,14 @@ from pathlib import Path
 
 # Load environment variables
 env_path = Path(__file__).parent.parent / '.env'
+print(f"🔍 Loading .env from: {env_path}")
+print(f"📁 .env exists: {env_path.exists()}")
+
 load_dotenv(env_path)
+
+# ✅ ПРОВЕРЯЕМ ЧТО ТОКЕН ЗАГРУЗИЛСЯ
+bot_token = os.getenv('BOT_TOKEN')
+print(f"🔑 BOT_TOKEN loaded: {bot_token[:10] if bot_token else 'NOT FOUND'}...")
 
 
 class Config:
@@ -13,7 +20,10 @@ class Config:
 
     # Telegram
     BOT_TOKEN = os.getenv('BOT_TOKEN')
-    BOT_USERNAME = os.getenv('BOT_USERNAME', '@fitness_tracker_bot')
+    if not BOT_TOKEN:
+        raise ValueError("❌ BOT_TOKEN not found in .env file! Check your .env configuration.")
+
+    BOT_USERNAME = os.getenv('BOT_USERNAME', '@LightweightPay_bot')
 
     # Admins
     ADMIN_IDS = [int(id.strip()) for id in os.getenv('ADMIN_IDS', '').split(',') if id.strip()]
@@ -27,8 +37,7 @@ class Config:
 
     # Payment
     TRIBUTE_API_KEY = os.getenv('TRIBUTE_API_KEY')
-    TRIBUTE_SECRET_KEY = os.getenv('TRIBUTE_SECRET_KEY')
-    TRIBUTE_SHOP_ID = os.getenv('TRIBUTE_SHOP_ID')
+    TRIBUTE_WEBHOOK_SECRET = os.getenv('TRIBUTE_WEBHOOK_SECRET')
 
     # Registration
     DEFAULT_REGISTRATION_COINS = int(os.getenv('DEFAULT_REGISTRATION_COINS', 50))

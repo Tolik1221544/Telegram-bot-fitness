@@ -269,41 +269,40 @@ async def send_revenue_chart(message):
     """Send revenue chart"""
     try:
         async with db_manager.SessionLocal() as session:
-    # Last 30 days
-    start_date = datetime.utcnow() - timedelta(days=30)
+            # Last 30 days
+            start_date = datetime.utcnow() - timedelta(days=30)
 
-    result = await session.execute(
-        select(
-            func.date(Payment.completed_at).label('date'),
-            func.sum(Payment.amount).label('total')
-        )
-        .where(Payment.status == 'completed')
-        .where(Payment.completed_at >= start_date)
-        .group_by(func.date(Payment.completed_at))
-        .order_by(func.date(Payment.completed_at))
-    )
+            result = await session.execute(
+                select(
+                    func.date(Payment.completed_at).label('date'),
+                    func.sum(Payment.amount).label('total')
+                )
+                .where(Payment.status == 'completed')
+                .where(Payment.completed_at >= start_date)
+                .group_by(func.date(Payment.completed_at))
+                .order_by(func.date(Payment.completed_at))
+            )
 
-    data = result.all()
+            data = result.all()
 
-if not data:
-    await message.reply_text("📈 Нет данных о доходах за последние 30 дней")
-    return
+        if not data:
+            await message.reply_text("📈 Нет данных о доходах за последние 30 дней")
+            return
 
     # Generate chart
-chart_path = await generate_revenue_chart(data)
+        chart_path = await generate_revenue_chart(data)
 
-with open(chart_path, 'rb') as photo:
-    await message.reply_photo(
-        photo=photo,
-        caption="📈 График доходов за 30 дней"
-    )
+        with open(chart_path, 'rb') as photo:
+            await message.reply_photo(
+                photo=photo,
+                caption="📈 График доходов за 30 дней"
+            )
 
-# Clean up
-os.remove(chart_path)
+        os.remove(chart_path)
 
-except Exception as e:
-logger.error(f"Error generating revenue chart: {e}")
-await message.reply_text("❌ Ошибка генерации графика")
+    except Exception as e:
+        logger.error(f"Error generating revenue chart: {e}")
+        await message.reply_text("❌ Ошибка генерации графика")
 
 async def show_referral_links(message):
     """Show all referral links with stats"""

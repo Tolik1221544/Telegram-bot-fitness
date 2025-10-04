@@ -60,7 +60,7 @@ class Payment(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime)
 
-    metadata = Column(Text)  # JSON string
+    payment_metadata = Column(Text)  # JSON string
 
 
 class ReferralLink(Base):
