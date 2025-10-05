@@ -1,5 +1,5 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, CallbackQueryHandler, ConversationHandler, MessageHandler, filters
+from telegram.ext import ContextTypes, CallbackQueryHandler, ConversationHandler, MessageHandler, filters, CommandHandler
 from bot.database import db_manager
 from bot.api_client import api_client
 from bot.config import config
@@ -7,7 +7,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Conversation states
+# ✅ ИСПРАВЛЕННЫЕ Conversation states
 AWAITING_EMAIL, AWAITING_CODE = range(2)
 
 
@@ -80,11 +80,10 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         text = f"""📊 **Ваша статистика**
 
-🏋️ Тренировок: {stats.get('workouts', 0)}
-📸 Фото: {stats.get('photos', 0)}
-🎤 Голосовых: {stats.get('voice', 0)}
-💬 Текстовых: {stats.get('text', 0)}
-💰 Потрачено монет: {stats.get('coinsSpent', 0)}
+🏋️ Тренировок: {stats.get('totalActivities', 0)}
+🍽 Приемов пищи: {stats.get('totalMeals', 0)}
+💰 Потрачено монет: {db_user.total_spent or 0}
+📅 С нами: {(datetime.utcnow() - db_user.created_at).days} дней
 """
 
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="start")]]
@@ -140,7 +139,7 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return AWAITING_CODE
         else:
             await update.message.reply_text(
-                "❌ Не удалось отправить код. Проверьте email и попробуйте снова:",
+                "❌ Не удалось отправить код. Проверьте email:"
             )
             return AWAITING_EMAIL
 
@@ -148,7 +147,7 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.error(f"Error sending verification code: {e}")
         await update.message.reply_text(
             "❌ Ошибка отправки кода. Попробуйте позже.\n"
-            "Используйте /start для возврата в меню."
+            "/start - вернуться в меню"
         )
         return ConversationHandler.END
 
@@ -159,7 +158,7 @@ async def handle_code_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     email = context.user_data.get('linking_email')
 
     if not email:
-        await update.message.reply_text("❌ Ошибка. Начните заново с /start")
+        await update.message.reply_text("❌ Ошибка. Начните заново: /start")
         return ConversationHandler.END
 
     try:
@@ -174,14 +173,14 @@ async def handle_code_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             async with db_manager.SessionLocal() as session:
                 db_user.email = email
                 db_user.api_token = result['accessToken']
-                db_user.api_user_id = result.get('userId')
+                db_user.api_user_id = result.get('user', {}).get('id')
                 session.add(db_user)
                 await session.commit()
 
             await update.message.reply_text(
                 "✅ Аккаунт успешно связан!\n\n"
                 "Теперь вы можете пользоваться всеми функциями бота.\n"
-                "Используйте /start для главного меню."
+                "/start - главное меню"
             )
 
             # Clear user data
@@ -197,8 +196,8 @@ async def handle_code_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error confirming code: {e}")
         await update.message.reply_text(
-            "❌ Ошибка подтверждения кода. Попробуйте позже.\n"
-            "Используйте /start для возврата в меню."
+            "❌ Ошибка подтверждения. Попробуйте позже.\n"
+            "/start - вернуться в меню"
         )
         return ConversationHandler.END
 
@@ -206,8 +205,8 @@ async def handle_code_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cancel_linking(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel account linking"""
     await update.message.reply_text(
-        "❌ Связывание аккаунта отменено.\n"
-        "Используйте /start для возврата в меню."
+        "❌ Связывание отменено.\n"
+        "/start - вернуться в меню"
     )
     context.user_data.clear()
     return ConversationHandler.END
@@ -238,6 +237,8 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 **Основные команды:**
 /start - Главное меню
 /help - Эта справка
+/balance - Проверить баланс
+/admin - Админ панель (для админов)
 
 **Как пользоваться:**
 1️⃣ Свяжите аккаунт с приложением
@@ -245,7 +246,7 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 3️⃣ Используйте монеты в приложении
 
 **Поддержка:**
-Если у вас возникли проблемы, напишите @support
+Если у вас проблемы, напишите @support
 """
 
     await query.message.edit_text(
@@ -253,6 +254,7 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="start")]]),
         parse_mode='Markdown'
     )
+
 
 async def back_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Return to main menu"""
@@ -301,21 +303,20 @@ async def back_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def register_user_handlers(application):
     """Register user handlers"""
     # Callback handlers
-    application.add_handler(CallbackQueryHandler(back_to_start, pattern="^start$"))  # Добавили
+    application.add_handler(CallbackQueryHandler(back_to_start, pattern="^start$"))
     application.add_handler(CallbackQueryHandler(show_balance, pattern="^balance$"))
     application.add_handler(CallbackQueryHandler(show_stats, pattern="^stats$"))
     application.add_handler(CallbackQueryHandler(show_restore, pattern="^restore$"))
     application.add_handler(CallbackQueryHandler(show_help, pattern="^help$"))
 
-    # Account linking conversation
-    link_conv_handler = ConversationHandler(
+    # ✅ ИСПРАВЛЕННЫЙ ConversationHandler
+    link_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_link_account, pattern="^link_account$")],
         states={
             AWAITING_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email_input)],
             AWAITING_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code_input)],
         },
-        fallbacks=[MessageHandler(filters.Regex('^/cancel$'), cancel_linking)],
-        per_message=False  # Добавили
+        fallbacks=[CommandHandler("cancel", cancel_linking)]
     )
 
-    application.add_handler(link_conv_handler)
+    application.add_handler(link_conv)

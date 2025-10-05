@@ -7,15 +7,15 @@ from bot.config import config
 from bot.utils.charts import generate_spending_chart, generate_revenue_chart
 from datetime import datetime, timedelta
 import logging
-import re
 import os
-from sqlalchemy import select, func, update
+from sqlalchemy import select, func
 import uuid
 
 logger = logging.getLogger(__name__)
 
-# Conversation states
-SET_REGISTRATION_COINS, SET_USER_COINS, CREATE_REFERRAL = range(3)
+# ✅ ИСПРАВЛЕННЫЕ Conversation states
+SET_REGISTRATION_COINS, SET_USER_COINS_EMAIL, SET_USER_COINS_AMOUNT, CREATE_REFERRAL = range(4)
+
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin panel command"""
@@ -37,7 +37,6 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-
     stats_text = await get_admin_stats()
 
     await update.message.reply_text(
@@ -46,27 +45,24 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
+
 async def get_admin_stats():
     """Get admin statistics"""
     async with db_manager.SessionLocal() as session:
-        # User stats
         total_users = await session.execute(select(func.count(User.id)))
         total_users = total_users.scalar()
 
-        # Active users (last 7 days)
         week_ago = datetime.utcnow() - timedelta(days=7)
         active_users = await session.execute(
             select(func.count(User.id)).where(User.last_active >= week_ago)
         )
         active_users = active_users.scalar()
 
-        # Payment stats
         total_payments = await session.execute(
             select(func.sum(Payment.amount)).where(Payment.status == 'completed')
         )
         total_revenue = total_payments.scalar() or 0
 
-        # Today's revenue
         today = datetime.utcnow().date()
         today_payments = await session.execute(
             select(func.sum(Payment.amount))
@@ -75,13 +71,12 @@ async def get_admin_stats():
         )
         today_revenue = today_payments.scalar() or 0
 
-        # Escape special characters for Markdown
         return f"""📊 Статистика:
 👥 Всего пользователей: {total_users}
 🟢 Активных \\(7 дней\\): {active_users}
 💰 Общий доход: {total_revenue:.2f} ₽
-📅 Доход сегодня: {today_revenue:.2f} ₽
-"""
+📅 Доход сегодня: {today_revenue:.2f} ₽"""
+
 
 async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle admin callbacks"""
@@ -90,30 +85,30 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     if user.id not in config.ADMIN_IDS:
         await query.answer("❌ Недостаточно прав", show_alert=True)
-        return
+        return ConversationHandler.END
 
     await query.answer()
 
     if query.data == "admin_set_reg_coins":
         await query.message.reply_text(
-            "💰 Введите новое количество монет при регистрации (текущее: {})".format(
-                config.DEFAULT_REGISTRATION_COINS
-            )
+            f"💰 Введите новое количество монет при регистрации\n"
+            f"Текущее: {config.DEFAULT_REGISTRATION_COINS}"
         )
         return SET_REGISTRATION_COINS
 
     elif query.data == "admin_set_user_coins":
         await query.message.reply_text(
-            "💸 Введите email пользователя и количество монет через пробел\n"
-            "Например: user@example.com 100"
+            "💸 Введите email пользователя:"
         )
-        return SET_USER_COINS
+        return SET_USER_COINS_EMAIL
 
     elif query.data == "admin_spending_chart":
         await send_spending_chart(query.message)
+        return ConversationHandler.END
 
     elif query.data == "admin_revenue_chart":
         await send_revenue_chart(query.message)
+        return ConversationHandler.END
 
     elif query.data == "admin_create_referral":
         await query.message.reply_text(
@@ -124,51 +119,67 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif query.data == "admin_list_referrals":
         await show_referral_links(query.message)
+        return ConversationHandler.END
 
     elif query.data == "admin_user_stats":
         await show_user_stats(query.message)
+        return ConversationHandler.END
+
+    return ConversationHandler.END
+
 
 async def set_registration_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Set registration bonus coins"""
     try:
         coins = int(update.message.text)
         if coins < 0:
-            raise ValueError("Coins must be positive")
+            raise ValueError("Negative coins")
 
-        # Update config (in real app, save to database/file)
         config.DEFAULT_REGISTRATION_COINS = coins
-
-        await update.message.reply_text(
-            f"✅ Бонус регистрации установлен: {coins} монет"
-        )
+        await update.message.reply_text(f"✅ Бонус регистрации: {coins} монет")
     except ValueError:
         await update.message.reply_text("❌ Введите корректное число")
 
     return ConversationHandler.END
 
-async def set_user_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Set user coins by email"""
+
+async def set_user_coins_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Step 1: Get email"""
+    email = update.message.text.strip()
+    context.user_data['admin_target_email'] = email
+
+    await update.message.reply_text(
+        f"📧 Email: {email}\n"
+        "💰 Теперь введите количество монет:"
+    )
+    return SET_USER_COINS_AMOUNT
+
+
+async def set_user_coins_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Step 2: Get amount and set coins"""
     try:
-        parts = update.message.text.split()
-        if len(parts) != 2:
-            raise ValueError("Invalid format")
-
-        email = parts[0]
-        coins = int(parts[1])
-
+        coins = int(update.message.text)
         if coins < 0:
-            raise ValueError("Coins must be positive")
+            raise ValueError("Negative")
+
+        email = context.user_data.get('admin_target_email')
+        if not email:
+            await update.message.reply_text("❌ Ошибка: email не найден")
+            return ConversationHandler.END
 
         # Send verification code
         success = await api_client.send_verification_code(email)
         if not success:
-            await update.message.reply_text(f"❌ Не удалось найти пользователя {email}")
+            await update.message.reply_text(f"❌ Пользователь {email} не найден")
             return ConversationHandler.END
 
-        # Auto-confirm with test code if it's a test account
+        # Auto-confirm for test accounts
         test_codes = {
             'test@lightweightfit.com': '123456',
-            'demo@lightweightfit.com': '111111'
+            'demo@lightweightfit.com': '111111',
+            'review@lightweightfit.com': '777777',
+            'apple.review@lightweightfit.com': '999999',
+            'dev@lightweightfit.com': '000000'
         }
 
         if email in test_codes:
@@ -176,7 +187,7 @@ async def set_user_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
             token = auth_result['accessToken']
 
             # Set balance
-            result = await api_client.set_balance(token, coins, 'admin')
+            await api_client.set_balance(token, coins, 'admin')
 
             await update.message.reply_text(
                 f"✅ Установлено {coins} монет для {email}"
@@ -187,10 +198,18 @@ async def set_user_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Пользователь должен подтвердить в приложении"
             )
 
+    except ValueError:
+        await update.message.reply_text("❌ Введите корректное число")
     except Exception as e:
+        logger.error(f"Error setting user coins: {e}")
         await update.message.reply_text(f"❌ Ошибка: {e}")
+    finally:
+        # Cleanup
+        if 'admin_target_email' in context.user_data:
+            del context.user_data['admin_target_email']
 
     return ConversationHandler.END
+
 
 async def create_referral_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Create new referral link"""
@@ -226,12 +245,11 @@ async def create_referral_link(update: Update, context: ContextTypes.DEFAULT_TYP
 
     return ConversationHandler.END
 
+
 async def send_spending_chart(message):
     """Send coin spending chart"""
     try:
-        # Get spending data
         async with db_manager.SessionLocal() as session:
-            # Last 30 days
             start_date = datetime.utcnow() - timedelta(days=30)
 
             result = await session.execute(
@@ -259,18 +277,18 @@ async def send_spending_chart(message):
                 caption="📊 График трат монет за 30 дней"
             )
 
-        # Clean up
+        # Cleanup
         os.remove(chart_path)
 
     except Exception as e:
         logger.error(f"Error generating spending chart: {e}")
         await message.reply_text("❌ Ошибка генерации графика")
 
+
 async def send_revenue_chart(message):
     """Send revenue chart"""
     try:
         async with db_manager.SessionLocal() as session:
-            # Last 30 days
             start_date = datetime.utcnow() - timedelta(days=30)
 
             result = await session.execute(
@@ -290,7 +308,7 @@ async def send_revenue_chart(message):
             await message.reply_text("📈 Нет данных о доходах за последние 30 дней")
             return
 
-    # Generate chart
+        # Generate chart
         chart_path = await generate_revenue_chart(data)
 
         with open(chart_path, 'rb') as photo:
@@ -304,6 +322,7 @@ async def send_revenue_chart(message):
     except Exception as e:
         logger.error(f"Error generating revenue chart: {e}")
         await message.reply_text("❌ Ошибка генерации графика")
+
 
 async def show_referral_links(message):
     """Show all referral links with stats"""
@@ -322,7 +341,7 @@ async def show_referral_links(message):
     bot_username = config.BOT_USERNAME.replace('@', '')
     text = "📋 **Реферальные ссылки:**\n\n"
 
-    for link in links[:10]:  # Show last 10
+    for link in links[:10]:
         link_url = f"https://t.me/{bot_username}?start={link.code}"
         text += f"**{link.name}**\n"
         text += f"🔗 `{link_url}`\n"
@@ -333,10 +352,10 @@ async def show_referral_links(message):
 
     await message.reply_text(text, parse_mode='Markdown')
 
+
 async def show_user_stats(message):
     """Show detailed user statistics"""
     async with db_manager.SessionLocal() as session:
-        # User distribution by registration source
         result = await session.execute(
             select(
                 User.referred_by,
@@ -346,7 +365,6 @@ async def show_user_stats(message):
         )
         referral_stats = result.all()
 
-        # Active subscriptions
         result = await session.execute(
             select(func.count(Payment.id))
             .where(Payment.status == 'completed')
@@ -360,29 +378,40 @@ async def show_user_stats(message):
 
     for source, count in referral_stats[:10]:
         if source:
-            text += f"• {source}: {count} чел.\n"
+            text += f"• {source}: {count} чел\\.\n"
         else:
-            text += f"• Прямые: {count} чел.\n"
+            text += f"• Прямые: {count} чел\\.\n"
 
     await message.reply_text(text, parse_mode='Markdown')
 
 
-# Register admin handlers
+async def cancel_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel admin action"""
+    await update.message.reply_text("❌ Отменено\n/admin - вернуться в панель")
+    return ConversationHandler.END
+
+
 def register_admin_handlers(application):
+    """Register admin handlers"""
     application.add_handler(CommandHandler("admin", admin_command))
 
-    # Conversation handler for admin actions
-    conv_handler = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(handle_admin_callback, pattern="^admin_")
-        ],
+    admin_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(handle_admin_callback, pattern="^admin_")],
         states={
-            SET_REGISTRATION_COINS: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_registration_coins)],
-            SET_USER_COINS: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_user_coins)],
-            CREATE_REFERRAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_referral_link)]
+            SET_REGISTRATION_COINS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, set_registration_coins)
+            ],
+            SET_USER_COINS_EMAIL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, set_user_coins_email)
+            ],
+            SET_USER_COINS_AMOUNT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, set_user_coins_amount)
+            ],
+            CREATE_REFERRAL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, create_referral_link)
+            ]
         },
-        fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)],
-        per_message=False  # Добавили
+        fallbacks=[CommandHandler("cancel", cancel_admin_action)]
     )
 
-    application.add_handler(conv_handler)
+    application.add_handler(admin_conv)
