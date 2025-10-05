@@ -18,63 +18,70 @@ AWAITING_PROMO = 1
 
 
 class TributePayment:
-    """Tribute.tg payment integration - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
+    """Tribute.tg payment integration"""
 
     def __init__(self):
         self.api_key = config.TRIBUTE_API_KEY
         self.webhook_secret = config.TRIBUTE_WEBHOOK_SECRET
-
-        # ✅ ПРАВИЛЬНЫЙ URL согласно документации Tribute.tg
-        self.base_url = "https://api.tribute.tg"
+        self.base_url = "https://tribute.tg/api/v1"
 
     async def create_payment(self, amount: float, order_id: str, description: str,
                              success_url: Optional[str] = None,
                              telegram_id: Optional[int] = None) -> dict:
-        """Create payment via Tribute API
+        """Create payment via Tribute API"""
 
-        Документация: https://tribute.tg/docs
-        """
-
-        # ✅ Tribute принимает рубли (не копейки!)
+        # Формат данных для создания продукта/платежа
         payload = {
-            "amount": amount,  # В рублях (299, 499 и т.д.)
-            "description": description,
-            "order_id": order_id,
+            "name": description,
+            "price": amount,
+            "custom_id": order_id,
             "return_url": success_url or f"https://t.me/{config.BOT_USERNAME.replace('@', '')}",
             "metadata": {
-                "telegram_id": str(telegram_id) if telegram_id else None,
-                "source": "telegram_bot"
+                "telegram_id": str(telegram_id) if telegram_id else None
             }
         }
 
+        # ✅ Правильный заголовок согласно документации
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Api-Key": self.api_key,
             "Content-Type": "application/json"
         }
 
         try:
             async with aiohttp.ClientSession() as session:
-                # ✅ Правильный endpoint
+                # Создаем продукт
                 async with session.post(
-                        f"{self.base_url}/payments",
+                        f"{self.base_url}/products",
                         json=payload,
                         headers=headers,
                         timeout=aiohttp.ClientTimeout(total=30)
                 ) as response:
                     response_text = await response.text()
 
-                    if response.status == 200 or response.status == 201:
+                    logger.info(f"Tribute API Response: {response.status} - {response_text[:500]}")
+
+                    if response.status in [200, 201]:
                         data = await response.json()
+
+                        # Получаем ссылку на оплату
+                        payment_url = data.get("payment_url") or data.get("url") or data.get("link")
+                        payment_id = data.get("id") or data.get("product_id") or order_id
+
+                        # Если нет прямой ссылки, формируем её
+                        if not payment_url and data.get("id"):
+                            # Формируем ссылку на оплату продукта
+                            payment_url = f"https://tribute.tg/pay/{data['id']}"
+
                         return {
                             "success": True,
-                            "payment_url": data.get("payment_url") or data.get("url"),
-                            "payment_id": data.get("id") or data.get("payment_id")
+                            "payment_url": payment_url,
+                            "payment_id": payment_id
                         }
                     else:
                         logger.error(f"Tribute payment creation failed: {response.status} - {response_text}")
                         return {
                             "success": False,
-                            "error": f"HTTP {response.status}: {response_text}"
+                            "error": f"HTTP {response.status}: {response_text[:100]}"
                         }
         except asyncio.TimeoutError:
             logger.error("Tribute API timeout")
@@ -87,26 +94,41 @@ class TributePayment:
         """Check payment status via Tribute API"""
 
         headers = {
-            "Authorization": f"Bearer {self.api_key}"
+            "Api-Key": self.api_key
         }
 
         try:
             async with aiohttp.ClientSession() as session:
-                # ✅ Правильный endpoint для проверки статуса
+                # Получаем информацию о продукте
                 async with session.get(
-                        f"{self.base_url}/payments/{payment_id}",
+                        f"{self.base_url}/products/{payment_id}",
                         headers=headers,
                         timeout=aiohttp.ClientTimeout(total=10)
                 ) as response:
                     if response.status == 200:
                         data = await response.json()
-                        return {
-                            "success": True,
-                            "status": data.get("status"),  # succeeded, pending, failed
-                            "amount": data.get("amount"),
-                            "order_id": data.get("order_id")
-                        }
+
+                        # Проверяем статус оплаты
+                        status = data.get("status", "pending")
+                        is_paid = data.get("is_paid", False)
+
+                        if is_paid or status == "paid":
+                            return {
+                                "success": True,
+                                "status": "paid",
+                                "amount": data.get("price"),
+                                "order_id": data.get("custom_id")
+                            }
+                        else:
+                            return {
+                                "success": True,
+                                "status": "pending",
+                                "amount": data.get("price"),
+                                "order_id": data.get("custom_id")
+                            }
                     else:
+                        response_text = await response.text()
+                        logger.error(f"Check status failed: {response.status} - {response_text}")
                         return {
                             "success": False,
                             "status": "unknown"
@@ -117,6 +139,7 @@ class TributePayment:
 
     def verify_webhook(self, signature: str, payload: str) -> bool:
         """Verify Tribute webhook signature"""
+        import hashlib
         expected_signature = hashlib.sha256(
             f"{payload}{self.webhook_secret}".encode()
         ).hexdigest()

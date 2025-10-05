@@ -63,16 +63,17 @@ class Payment(Base):
 
 
 class ReferralLink(Base):
+    """Реферальные ссылки для трекинга"""
     __tablename__ = 'referral_links'
 
     id = Column(Integer, primary_key=True)
-    code = Column(String(100), unique=True)
-    name = Column(String(255))  # e.g., "Fitness Center Moscow"
+    code = Column(String(100), unique=True, nullable=False)
+    name = Column(String(255), nullable=False)
     description = Column(Text)
 
     creator_telegram_id = Column(Integer)
 
-    # Stats
+    # Статистика
     clicks = Column(Integer, default=0)
     registrations = Column(Integer, default=0)
     purchases = Column(Integer, default=0)
@@ -83,18 +84,19 @@ class ReferralLink(Base):
 
 
 class CoinSpending(Base):
+    """История трат монет для графиков"""
     __tablename__ = 'coin_spending'
 
     id = Column(Integer, primary_key=True)
-    telegram_id = Column(Integer)
+    telegram_id = Column(Integer, nullable=False)
     api_user_id = Column(String(255))
 
-    amount = Column(Integer)
+    amount = Column(Integer, nullable=False)
     feature = Column(String(100))  # photo, voice, text
     description = Column(Text)
 
     timestamp = Column(DateTime, default=datetime.utcnow)
-    date = Column(String(10))  # YYYY-MM-DD for grouping
+    date = Column(String(10))
 
 
 # Database manager
@@ -108,7 +110,7 @@ class DatabaseManager:
         )
 
     async def init_db(self):
-        """Initialize database"""
+        """Initialize database with all tables"""
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
