@@ -7,8 +7,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# ✅ ИСПРАВЛЕННЫЕ Conversation states
-AWAITING_EMAIL, AWAITING_CODE = range(2)
+# ✅ УНИКАЛЬНЫЕ состояния для user - начинаются с 200
+USER_AWAITING_EMAIL = 200
+USER_AWAITING_CODE = 201
 
 
 async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -113,7 +114,7 @@ async def start_link_account(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode='Markdown'
     )
 
-    return AWAITING_EMAIL
+    return USER_AWAITING_EMAIL
 
 
 async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -124,7 +125,7 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     import re
     if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
         await update.message.reply_text("❌ Неверный формат email. Попробуйте снова:")
-        return AWAITING_EMAIL
+        return USER_AWAITING_EMAIL
 
     try:
         # Send verification code
@@ -136,12 +137,12 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 f"✅ Код подтверждения отправлен на {email}\n\n"
                 "Введите код из письма:"
             )
-            return AWAITING_CODE
+            return USER_AWAITING_CODE
         else:
             await update.message.reply_text(
                 "❌ Не удалось отправить код. Проверьте email:"
             )
-            return AWAITING_EMAIL
+            return USER_AWAITING_EMAIL
 
     except Exception as e:
         logger.error(f"Error sending verification code: {e}")
@@ -191,7 +192,7 @@ async def handle_code_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 "❌ Неверный код. Попробуйте снова:"
             )
-            return AWAITING_CODE
+            return USER_AWAITING_CODE
 
     except Exception as e:
         logger.error(f"Error confirming code: {e}")
@@ -309,12 +310,12 @@ def register_user_handlers(application):
     application.add_handler(CallbackQueryHandler(show_restore, pattern="^restore$"))
     application.add_handler(CallbackQueryHandler(show_help, pattern="^help$"))
 
-    # ✅ ИСПРАВЛЕННЫЙ ConversationHandler
+    # ✅ ИСПРАВЛЕННЫЙ ConversationHandler с уникальными состояниями
     link_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_link_account, pattern="^link_account$")],
         states={
-            AWAITING_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email_input)],
-            AWAITING_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code_input)],
+            USER_AWAITING_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email_input)],
+            USER_AWAITING_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code_input)],
         },
         fallbacks=[CommandHandler("cancel", cancel_linking)]
     )

@@ -18,13 +18,14 @@ AWAITING_PROMO = 1
 
 
 class TributePayment:
-    """Tribute.tg payment integration - ПРАВИЛЬНАЯ РЕАЛИЗАЦИЯ"""
+    """Tribute.tg payment integration - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
 
     def __init__(self):
         self.api_key = config.TRIBUTE_API_KEY
         self.webhook_secret = config.TRIBUTE_WEBHOOK_SECRET
 
-        self.base_url = "https://tribute.tg/api"
+        # ✅ ПРАВИЛЬНЫЙ URL согласно документации Tribute.tg
+        self.base_url = "https://api.tribute.tg"
 
     async def create_payment(self, amount: float, order_id: str, description: str,
                              success_url: Optional[str] = None,
@@ -34,14 +35,16 @@ class TributePayment:
         Документация: https://tribute.tg/docs
         """
 
+        # ✅ Tribute принимает рубли (не копейки!)
         payload = {
-            "amount": int(amount),  # Tribute требует INTEGER в копейках
-            "currency": "RUB",
-            "order_id": order_id,
+            "amount": amount,  # В рублях (299, 499 и т.д.)
             "description": description,
-            "success_url": success_url or f"https://t.me/{config.BOT_USERNAME.replace('@', '')}",
-            "fail_url": success_url or f"https://t.me/{config.BOT_USERNAME.replace('@', '')}",
-            "user_id": str(telegram_id) if telegram_id else None
+            "order_id": order_id,
+            "return_url": success_url or f"https://t.me/{config.BOT_USERNAME.replace('@', '')}",
+            "metadata": {
+                "telegram_id": str(telegram_id) if telegram_id else None,
+                "source": "telegram_bot"
+            }
         }
 
         headers = {
@@ -51,19 +54,20 @@ class TributePayment:
 
         try:
             async with aiohttp.ClientSession() as session:
+                # ✅ Правильный endpoint
                 async with session.post(
-                        f"{self.base_url}/create-payment",
+                        f"{self.base_url}/payments",
                         json=payload,
                         headers=headers,
-                        timeout=aiohttp.ClientTimeout(total=10)
+                        timeout=aiohttp.ClientTimeout(total=30)
                 ) as response:
                     response_text = await response.text()
 
-                    if response.status == 200:
+                    if response.status == 200 or response.status == 201:
                         data = await response.json()
                         return {
                             "success": True,
-                            "payment_url": data.get("payment_url"),
+                            "payment_url": data.get("payment_url") or data.get("url"),
                             "payment_id": data.get("id") or data.get("payment_id")
                         }
                     else:
@@ -88,8 +92,9 @@ class TributePayment:
 
         try:
             async with aiohttp.ClientSession() as session:
+                # ✅ Правильный endpoint для проверки статуса
                 async with session.get(
-                        f"{self.base_url}/payment/{payment_id}",
+                        f"{self.base_url}/payments/{payment_id}",
                         headers=headers,
                         timeout=aiohttp.ClientTimeout(total=10)
                 ) as response:
@@ -97,7 +102,7 @@ class TributePayment:
                         data = await response.json()
                         return {
                             "success": True,
-                            "status": data.get("status"),  # paid, pending, failed
+                            "status": data.get("status"),  # succeeded, pending, failed
                             "amount": data.get("amount"),
                             "order_id": data.get("order_id")
                         }
@@ -117,6 +122,54 @@ class TributePayment:
         ).hexdigest()
         return signature == expected_signature
 
+SUBSCRIPTION_PACKAGES = [
+    {
+        'id': 'week_50',
+        'name': '📅 Неделя (50 монет)',
+        'coins': 50,
+        'days': 7,
+        'price': 99,  # ✅ В рублях, не в копейках
+        'description': '50 монет на 7 дней'
+    },
+    {
+        'id': 'two_weeks_100',
+        'name': '📆 2 недели (100 монет)',
+        'coins': 100,
+        'days': 14,
+        'price': 199,
+        'description': '100 монет на 14 дней'
+    },
+    {
+        'id': 'month_200',
+        'name': '📆 Месяц (200 монет)',
+        'coins': 200,
+        'days': 30,
+        'price': 299,
+        'description': '200 монет на 30 дней'
+    },
+    {
+        'id': 'month_500',
+        'name': '💎 Премиум (500 монет)',
+        'coins': 500,
+        'days': 30,
+        'price': 499,
+        'description': '500 монет на 30 дней'
+    }
+]
+
+def validate_tribute_config():
+    """Проверка настроек Tribute перед запуском"""
+    if not config.TRIBUTE_API_KEY:
+        logger.error("❌ TRIBUTE_API_KEY не настроен в .env!")
+        logger.error("Получите ключ на https://tribute.tg/merchants")
+        return False
+
+    if not config.TRIBUTE_WEBHOOK_SECRET:
+        logger.warning("⚠️ TRIBUTE_WEBHOOK_SECRET не настроен!")
+        logger.warning("Webhook подтверждения не будут работать")
+
+    logger.info(f"✅ Tribute API Key: {config.TRIBUTE_API_KEY[:10]}...")
+    return True
 
 tribute = TributePayment()
 

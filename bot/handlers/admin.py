@@ -13,8 +13,10 @@ import uuid
 
 logger = logging.getLogger(__name__)
 
-# ✅ ИСПРАВЛЕННЫЕ Conversation states
-SET_REGISTRATION_COINS, SET_USER_COINS_EMAIL, SET_USER_COINS_AMOUNT, CREATE_REFERRAL = range(4)
+ADMIN_SET_REG_COINS = 100
+ADMIN_SET_USER_EMAIL = 101
+ADMIN_SET_USER_AMOUNT = 102
+ADMIN_CREATE_REFERRAL = 103
 
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -94,13 +96,13 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
             f"💰 Введите новое количество монет при регистрации\n"
             f"Текущее: {config.DEFAULT_REGISTRATION_COINS}"
         )
-        return SET_REGISTRATION_COINS
+        return ADMIN_SET_REG_COINS
 
     elif query.data == "admin_set_user_coins":
         await query.message.reply_text(
             "💸 Введите email пользователя:"
         )
-        return SET_USER_COINS_EMAIL
+        return ADMIN_SET_USER_EMAIL
 
     elif query.data == "admin_spending_chart":
         await send_spending_chart(query.message)
@@ -115,7 +117,7 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
             "🔗 Введите название для реферальной ссылки\n"
             "Например: Фитнес-центр Москва"
         )
-        return CREATE_REFERRAL
+        return ADMIN_CREATE_REFERRAL
 
     elif query.data == "admin_list_referrals":
         await show_referral_links(query.message)
@@ -152,7 +154,7 @@ async def set_user_coins_email(update: Update, context: ContextTypes.DEFAULT_TYP
         f"📧 Email: {email}\n"
         "💰 Теперь введите количество монет:"
     )
-    return SET_USER_COINS_AMOUNT
+    return ADMIN_SET_USER_AMOUNT
 
 
 async def set_user_coins_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -398,16 +400,16 @@ def register_admin_handlers(application):
     admin_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(handle_admin_callback, pattern="^admin_")],
         states={
-            SET_REGISTRATION_COINS: [
+            ADMIN_SET_REG_COINS: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, set_registration_coins)
             ],
-            SET_USER_COINS_EMAIL: [
+            ADMIN_SET_USER_EMAIL: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, set_user_coins_email)
             ],
-            SET_USER_COINS_AMOUNT: [
+            ADMIN_SET_USER_AMOUNT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, set_user_coins_amount)
             ],
-            CREATE_REFERRAL: [
+            ADMIN_CREATE_REFERRAL: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, create_referral_link)
             ]
         },
