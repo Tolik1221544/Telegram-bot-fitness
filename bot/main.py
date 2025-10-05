@@ -5,7 +5,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from bot.config import config
 from bot.database import db_manager
-from bot.handlers import start, admin, payment
+from bot.handlers import start, admin, payment, user
 import sys
 
 # Configure logging
@@ -46,12 +46,13 @@ def main():
 
     # Register handlers
     start.register_start_handlers(application)
+    user.register_user_handlers(application)  # Добавили
     admin.register_admin_handlers(application)
     payment.register_payment_handlers(application)
 
     # Error handler
     async def error_handler(update: Update, context):
-        logger.error(f"Exception while handling an update: {context.error}")
+        logger.error(f"Exception while handling an update: {context.error}", exc_info=context.error)
         if update and update.effective_message:
             await update.effective_message.reply_text(
                 "❌ Произошла ошибка. Попробуйте позже или обратитесь в поддержку."

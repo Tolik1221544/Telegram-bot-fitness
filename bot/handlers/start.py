@@ -38,39 +38,36 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if referral_code:
             await track_referral(referral_code, user.id)
 
-        welcome_text = f"""
-🎉 Добро пожаловать в Fitness Tracker Bot!
+        welcome_text = f"""🎉 Добро пожаловать в Fitness Tracker Bot!
 
 Вы получили {config.DEFAULT_REGISTRATION_COINS} монет в подарок! 🎁
 
 Что умеет этот бот:
-- 💰 Управление монетами и подписками
-- 📊 Просмотр статистики
-- 🔄 Восстановление покупок
-- 💳 Покупка подписок из России
+💰 Управление монетами и подписками
+📊 Просмотр статистики
+🔄 Восстановление покупок
+💳 Покупка подписок из России
 
-Для начала работы вам нужно связать аккаунт с приложением.
-        """
+Для начала работы свяжите аккаунт с приложением."""
     else:
-        welcome_text = f"""
-👋 С возвращением, {user.first_name}!
-
-Ваш баланс: загружается...
-        """
+        welcome_text = f"👋 С возвращением, {user.first_name}!\n\n"
 
         # Update balance if user is linked
         if db_user.api_token:
             try:
                 balance = await api_client.get_balance(db_user.api_token)
-                welcome_text = f"""
-👋 С возвращением, {user.first_name}!
+                welcome_text += f"💰 Ваш баланс: {balance.get('balance', 0)} монет\n"
 
-💰 Ваш баланс: {balance['balance']} монет
-"""
                 if balance.get('hasActiveSubscription'):
-                    welcome_text += f"📅 Подписка активна до: {balance['subscriptionExpiresAt'][:10]}\n"
-            except:
-                pass
+                    expiry = balance.get('subscriptionExpiresAt', '')
+                    if expiry and len(expiry) >= 10:
+                        expiry = expiry[:10]
+                        welcome_text += f"📅 Подписка до: {expiry}\n"
+            except Exception as e:
+                logger.error(f"Error getting balance: {e}")
+                welcome_text += "Ваш баланс: загружается...\n"
+        else:
+            welcome_text += "Ваш баланс: загружается...\n"
 
     # Main menu keyboard
     keyboard = [
@@ -96,31 +93,29 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command"""
-    help_text = """
-📖 **Помощь по боту**
+    help_text = """📖 Помощь по боту
 
-**Основные команды:**
+Основные команды:
 /start - Главное меню
 /help - Эта справка
 /balance - Проверить баланс
 /subscribe - Купить подписку
 /stats - Статистика использования
 
-**Как связать аккаунт:**
+Как связать аккаунт:
 1. Нажмите "🔗 Связать аккаунт"
 2. Введите email от приложения
 3. Введите код подтверждения
 
-**Покупка подписки:**
+Покупка подписки:
 1. Нажмите "💳 Подписки"
 2. Выберите пакет
 3. Оплатите через Tribute (работает из РФ)
 
-**Проблемы?**
-Напишите @support_username
-    """
+Проблемы?
+Напишите в поддержку"""
 
-    await update.message.reply_text(help_text, parse_mode='Markdown')
+    await update.message.reply_text(help_text)
 
 
 # Register handlers

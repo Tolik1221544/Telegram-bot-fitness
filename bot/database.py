@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Float, Text
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Float, Text, select
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
@@ -7,7 +7,6 @@ from typing import Optional, Dict, Any
 from bot.config import config
 
 Base = declarative_base()
-
 
 class User(Base):
     __tablename__ = 'bot_users'

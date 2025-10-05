@@ -1,14 +1,15 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters, \
     ConversationHandler
-from bot.database import db_manager, User, Payment, CoinSpending
+from bot.database import db_manager, User, Payment, CoinSpending, ReferralLink
 from bot.api_client import api_client
 from bot.config import config
 from bot.utils.charts import generate_spending_chart, generate_revenue_chart
 from datetime import datetime, timedelta
 import logging
 import re
-from sqlalchemy import select, func
+import os
+from sqlalchemy import select, func, update
 import uuid
 
 logger = logging.getLogger(__name__)
@@ -74,10 +75,10 @@ async def get_admin_stats():
         )
         today_revenue = today_payments.scalar() or 0
 
-        return f"""
-📊 **Статистика:**
+        # Escape special characters for Markdown
+        return f"""📊 Статистика:
 👥 Всего пользователей: {total_users}
-🟢 Активных (7 дней): {active_users}
+🟢 Активных \\(7 дней\\): {active_users}
 💰 Общий доход: {total_revenue:.2f} ₽
 📅 Доход сегодня: {today_revenue:.2f} ₽
 """
@@ -380,7 +381,8 @@ def register_admin_handlers(application):
             SET_USER_COINS: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_user_coins)],
             CREATE_REFERRAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_referral_link)]
         },
-        fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)]
+        fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)],
+        per_message=False  # Добавили
     )
 
     application.add_handler(conv_handler)
