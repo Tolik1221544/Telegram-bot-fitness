@@ -20,21 +20,29 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-
 async def post_init(application: Application):
     """Initialize bot after startup"""
     # Initialize database
     await db_manager.init_db()
     logger.info("Database initialized")
 
+    # Initialize Tribute products
+    from bot.handlers.payment import tribute
+    try:
+        logger.info("🛍️ Starting Tribute products initialization...")
+        await tribute.init_products()
+        logger.info("✅ Tribute products initialized successfully")
+        logger.info(f"📦 Product IDs: {tribute.product_ids}")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Tribute products: {e}")
+        logger.exception("Full traceback:")
+
     # Set bot commands
     await application.bot.set_my_commands([
         ("start", "Главное меню"),
-        ("help", "Помощь"),
         ("balance", "Проверить баланс"),
         ("subscribe", "Купить подписку"),
-        ("stats", "Статистика"),
-        ("admin", "Админ панель (только для админов)")
+        ("admin", "Админ панель")
     ])
     logger.info("Bot commands set")
 

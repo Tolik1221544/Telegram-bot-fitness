@@ -19,6 +19,31 @@ ADMIN_SET_USER_AMOUNT = 102
 ADMIN_CREATE_REFERRAL = 103
 
 
+async def init_tribute_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Инициализация продуктов Tribute (для админов)"""
+    user = update.effective_user
+
+    if user.id not in config.ADMIN_IDS:
+        await update.message.reply_text("❌ У вас нет прав администратора")
+        return
+
+    from bot.handlers.payment import tribute
+
+    await update.message.reply_text("🔄 Инициализация продуктов Tribute...")
+
+    try:
+        await tribute.init_products()
+
+        text = "✅ Продукты успешно инициализированы!\n\n"
+        text += "📦 ID продуктов:\n"
+        for key, product_id in tribute.product_ids.items():
+            text += f"  • {key}: {product_id}\n"
+
+        await update.message.reply_text(text)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка инициализации: {e}")
+        logger.exception("Init products error:")
+
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin panel command"""
     user = update.effective_user
@@ -35,6 +60,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔗 Создать реф. ссылку", callback_data="admin_create_referral")],
         [InlineKeyboardButton("📋 Список реф. ссылок", callback_data="admin_list_referrals")],
         [InlineKeyboardButton("👥 Статистика пользователей", callback_data="admin_user_stats")],
+        [InlineKeyboardButton("🛍️ Инициализировать Tribute", callback_data="admin_init_tribute")],  # НОВАЯ КНОПКА
         [InlineKeyboardButton("🔙 Назад", callback_data="start")]
     ]
 
@@ -90,6 +116,26 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return ConversationHandler.END
 
     await query.answer()
+
+    if query.data == "admin_init_tribute":
+        from bot.handlers.payment import tribute
+
+        await query.message.reply_text("🔄 Инициализация продуктов Tribute...")
+
+        try:
+            await tribute.init_products()
+
+            text = "✅ Продукты успешно инициализированы!\n\n"
+            text += "📦 ID продуктов:\n"
+            for key, product_id in tribute.product_ids.items():
+                text += f"  • {key}: {product_id or 'не создан'}\n"
+
+            await query.message.reply_text(text)
+        except Exception as e:
+            await query.message.reply_text(f"❌ Ошибка инициализации: {e}")
+            logger.exception("Init products error:")
+
+        return ConversationHandler.END
 
     if query.data == "admin_set_reg_coins":
         await query.message.reply_text(

@@ -1,3 +1,5 @@
+# bot/handlers/payment.py
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, MessageHandler, filters, ConversationHandler, \
     CommandHandler
@@ -9,143 +11,278 @@ import uuid
 import aiohttp
 import hashlib
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Dict
 import asyncio
 
 logger = logging.getLogger(__name__)
 
-# Conversation states
 AWAITING_PROMO = 1
 
 
 class TributePayment:
-    """Tribute.tg payment integration"""
+    """Tribute.tg payment integration with Products API"""
 
     def __init__(self):
         self.api_key = config.TRIBUTE_API_KEY
         self.webhook_secret = config.TRIBUTE_WEBHOOK_SECRET
-        # ИСПРАВЛЕНО: используем правильный базовый URL
         self.base_url = "https://tribute.tg/api"
 
-    async def create_payment(self, amount: float, order_id: str, description: str,
-                             success_url: Optional[str] = None,
-                             telegram_id: Optional[int] = None) -> dict:
-        """Create payment via Tribute API"""
-
-        if not self.api_key:
-            logger.error("❌ TRIBUTE_API_KEY not configured!")
-            return {
-                "success": False,
-                "error": "API key not configured"
-            }
-
-        # ИСПРАВЛЕНО: Согласно документации Tribute, используем GET запрос
-        params = {
-            "api_key": self.api_key,
-            "name": description,
-            "amount": int(amount),  # Сумма в рублях
-            "order_id": order_id,
+        # ID продуктов в Tribute (после создания)
+        self.product_ids = {
+            'week_50': None,  # Заполнится после создания
+            'two_weeks_100': None,
+            'month_200': None,
+            'month_500': None,
         }
 
-        if telegram_id:
-            params["telegram_id"] = telegram_id
+    async def init_products(self):
+        """
+        Инициализация продуктов в Tribute
+        Вызывается один раз при запуске бота
+        """
+        logger.info("🛍️ Initializing Tribute products...")
 
-        logger.info(f"📤 Sending request to Tribute API:")
-        logger.info(f"   URL: {self.base_url}/create")
-        logger.info(f"   Params: {params}")
+        products_to_create = [
+            {
+                'name': '📅 Неделя (50 монет)',
+                'price': 99,
+                'description': '50 монет на 7 дней',
+                'key': 'week_50',
+                'coins': 50,
+                'days': 7
+            },
+            {
+                'name': '📆 2 недели (100 монет)',
+                'price': 199,
+                'description': '100 монет на 14 дней',
+                'key': 'two_weeks_100',
+                'coins': 100,
+                'days': 14
+            },
+            {
+                'name': '📆 Месяц (200 монет)',
+                'price': 299,
+                'description': '200 монет на 30 дней',
+                'key': 'month_200',
+                'coins': 200,
+                'days': 30
+            },
+            {
+                'name': '💎 Премиум (500 монет)',
+                'price': 499,
+                'description': '500 монет на 30 дней',
+                'key': 'month_500',
+                'coins': 500,
+                'days': 30
+            }
+        ]
+
+        # Сначала получаем список существующих продуктов
+        existing_products = await self.get_products()
+
+        for product_data in products_to_create:
+            # Проверяем, есть ли уже такой продукт
+            existing = next(
+                (p for p in existing_products if p['name'] == product_data['name']),
+                None
+            )
+
+            if existing:
+                logger.info(f"✅ Product already exists: {product_data['name']} (ID: {existing['id']})")
+                self.product_ids[product_data['key']] = existing['id']
+            else:
+                # Создаем новый продукт
+                result = await self.create_product(
+                    name=product_data['name'],
+                    price=product_data['price'],
+                    description=product_data['description']
+                )
+
+                if result['success']:
+                    product_id = result['product_id']
+                    self.product_ids[product_data['key']] = product_id
+                    logger.info(f"✅ Created product: {product_data['name']} (ID: {product_id})")
+                else:
+                    logger.error(f"❌ Failed to create product: {product_data['name']}")
+
+        logger.info(f"🛍️ Products initialized: {self.product_ids}")
+
+    async def get_products(self) -> List[Dict]:
+        """Получить список всех продуктов"""
+        if not self.api_key:
+            return []
+
+        params = {
+            "api_key": self.api_key
+        }
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                        f"{self.base_url}/products",
+                        params=params
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data.get('products', [])
+                    else:
+                        logger.error(f"Failed to get products: {response.status}")
+                        return []
+        except Exception as e:
+            logger.error(f"Error getting products: {e}")
+            return []
+
+    async def create_product(self, name: str, price: float, description: str) -> dict:
+        """
+        Создать цифровой товар в Tribute
+
+        Args:
+            name: Название товара
+            price: Цена в рублях
+            description: Описание товара
+        """
+        if not self.api_key:
+            return {"success": False, "error": "API key not configured"}
+
+        params = {
+            "api_key": self.api_key,
+            "name": name,
+            "price": int(price),
+            "description": description
+        }
+
+        logger.info(f"📤 Creating product: {name} - {price}₽")
 
         try:
             timeout = aiohttp.ClientTimeout(total=30)
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                # ИСПРАВЛЕНО: GET запрос вместо POST
+                async with session.get(
+                        f"{self.base_url}/products/create",
+                        params=params
+                ) as response:
+                    response_text = await response.text()
+
+                    logger.info(f"📥 Create product response: {response.status} - {response_text}")
+
+                    if response.status in [200, 201]:
+                        try:
+                            data = await response.json()
+                            product_id = data.get('id') or data.get('product_id')
+
+                            if product_id:
+                                return {
+                                    "success": True,
+                                    "product_id": product_id
+                                }
+                            else:
+                                return {
+                                    "success": False,
+                                    "error": "No product ID in response"
+                                }
+                        except:
+                            # Если ответ не JSON, возможно это просто ID
+                            if response_text.isdigit():
+                                return {
+                                    "success": True,
+                                    "product_id": int(response_text)
+                                }
+                            return {
+                                "success": False,
+                                "error": "Invalid response format"
+                            }
+                    else:
+                        return {
+                            "success": False,
+                            "error": f"HTTP {response.status}"
+                        }
+
+        except Exception as e:
+            logger.error(f"❌ Error creating product: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def create_payment_link(self, product_key: str, telegram_id: int,
+                                  custom_order_id: Optional[str] = None) -> dict:
+        """
+        Создать ссылку на оплату для конкретного продукта
+
+        Args:
+            product_key: Ключ продукта (week_50, month_200, и т.д.)
+            telegram_id: ID пользователя в Telegram
+            custom_order_id: Кастомный ID заказа (опционально)
+        """
+        product_id = self.product_ids.get(product_key)
+
+        if not product_id:
+            return {
+                "success": False,
+                "error": f"Product {product_key} not found"
+            }
+
+        params = {
+            "api_key": self.api_key,
+            "product_id": product_id,
+            "telegram_id": telegram_id
+        }
+
+        # Добавляем кастомный order_id если указан
+        if custom_order_id:
+            params["order_id"] = custom_order_id
+
+        logger.info(f"📤 Creating payment link for product {product_key} (ID: {product_id})")
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=30)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(
                         f"{self.base_url}/create",
                         params=params
                 ) as response:
                     response_text = await response.text()
 
-                    logger.info(f"📥 Tribute API Response:")
-                    logger.info(f"   Status: {response.status}")
-                    logger.info(f"   Body: {response_text}")
+                    logger.info(f"📥 Payment link response: {response.status} - {response_text}")
 
                     if response.status in [200, 201]:
-                        try:
-                            data = await response.json()
-                        except:
-                            # Если ответ не JSON, возможно это просто URL
-                            if response_text.startswith('http'):
+                        # Ответ - это URL для оплаты
+                        if response_text.startswith('http'):
+                            return {
+                                "success": True,
+                                "payment_url": response_text.strip(),
+                                "order_id": custom_order_id
+                            }
+                        else:
+                            try:
+                                data = await response.json()
+                                payment_url = data.get("payment_url") or data.get("url")
+
                                 return {
                                     "success": True,
-                                    "payment_url": response_text.strip(),
-                                    "payment_id": order_id
+                                    "payment_url": payment_url,
+                                    "order_id": custom_order_id
                                 }
-                            else:
-                                logger.error(f"❌ Failed to parse response: {response_text}")
+                            except:
                                 return {
                                     "success": False,
                                     "error": "Invalid response format"
                                 }
-
-                        # Получаем URL для оплаты из ответа
-                        payment_url = data.get("payment_url") or data.get("url") or data.get("link")
-                        payment_id = data.get("id") or data.get("payment_id") or order_id
-
-                        if not payment_url:
-                            logger.error(f"❌ No payment URL in response: {data}")
-                            return {
-                                "success": False,
-                                "error": "No payment URL returned"
-                            }
-
-                        logger.info(f"✅ Payment created successfully:")
-                        logger.info(f"   Payment ID: {payment_id}")
-                        logger.info(f"   Payment URL: {payment_url}")
-
-                        return {
-                            "success": True,
-                            "payment_url": payment_url,
-                            "payment_id": payment_id
-                        }
-
-                    elif response.status == 401:
-                        logger.error(f"❌ Unauthorized (401) - неверный API ключ")
-                        return {
-                            "success": False,
-                            "error": "Неверный API ключ"
-                        }
-
-                    elif response.status == 403:
-                        logger.error(f"❌ Forbidden (403) - доступ запрещен")
-                        return {
-                            "success": False,
-                            "error": "Доступ запрещен"
-                        }
-
                     else:
-                        logger.error(f"❌ Tribute API error: {response.status}")
-                        logger.error(f"   Response: {response_text}")
                         return {
                             "success": False,
-                            "error": f"HTTP {response.status}: {response_text[:100]}"
+                            "error": f"HTTP {response.status}"
                         }
 
-        except asyncio.TimeoutError:
-            logger.error("❌ Tribute API timeout")
-            return {"success": False, "error": "Timeout"}
         except Exception as e:
-            logger.error(f"❌ Tribute API error: {type(e).__name__}: {e}")
-            logger.exception("Full traceback:")
-            return {"success": False, "error": f"Error: {str(e)}"}
+            logger.error(f"❌ Error creating payment link: {e}")
+            return {"success": False, "error": str(e)}
 
-    async def check_payment_status(self, payment_id: str) -> dict:
-        """Check payment status via Tribute API"""
-
+    async def check_payment_status(self, order_id: str) -> dict:
+        """Проверить статус оплаты"""
         if not self.api_key:
-            return {"success": False, "status": "unknown", "error": "API key not configured"}
+            return {"success": False, "status": "unknown"}
 
         params = {
             "api_key": self.api_key,
-            "order_id": payment_id
+            "order_id": order_id
         }
 
         try:
@@ -157,47 +294,23 @@ class TributePayment:
                 ) as response:
                     if response.status == 200:
                         data = await response.json()
-
                         status = data.get("status", "pending")
                         is_paid = data.get("paid", False) or status in ["paid", "completed", "success"]
 
-                        if is_paid:
-                            return {
-                                "success": True,
-                                "status": "paid",
-                                "amount": data.get("amount"),
-                                "order_id": payment_id
-                            }
-                        else:
-                            return {
-                                "success": True,
-                                "status": "pending",
-                                "amount": data.get("amount"),
-                                "order_id": payment_id
-                            }
-                    else:
-                        response_text = await response.text()
-                        logger.error(f"Check status failed: {response.status} - {response_text}")
                         return {
-                            "success": False,
-                            "status": "unknown"
+                            "success": True,
+                            "status": "paid" if is_paid else "pending",
+                            "amount": data.get("amount"),
+                            "order_id": order_id
                         }
+                    else:
+                        return {"success": False, "status": "unknown"}
         except Exception as e:
             logger.error(f"Error checking payment: {e}")
             return {"success": False, "status": "unknown"}
 
-    def verify_webhook(self, signature: str, payload: str) -> bool:
-        """Verify Tribute webhook signature"""
-        if not self.webhook_secret:
-            logger.warning("⚠️ Webhook secret not configured")
-            return True
 
-        expected_signature = hashlib.sha256(
-            f"{payload}{self.webhook_secret}".encode()
-        ).hexdigest()
-        return signature == expected_signature
-
-
+# Пакеты подписок
 SUBSCRIPTION_PACKAGES = [
     {
         'id': 'week_50',
@@ -233,17 +346,6 @@ SUBSCRIPTION_PACKAGES = [
     }
 ]
 
-
-def validate_tribute_config():
-    """Проверка настроек Tribute"""
-    if not config.TRIBUTE_API_KEY:
-        logger.error("❌ TRIBUTE_API_KEY не настроен в .env!")
-        return False
-
-    logger.info(f"✅ Tribute API Key configured: {config.TRIBUTE_API_KEY[:10]}...")
-    return True
-
-
 tribute = TributePayment()
 
 
@@ -260,9 +362,6 @@ async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE)
         keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
 
     keyboard.append([
-        InlineKeyboardButton("💎 Прямая покупка монет", callback_data="direct_coins")
-    ])
-    keyboard.append([
         InlineKeyboardButton("🎁 Ввести промокод", callback_data="enter_promo")
     ])
     keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="start")])
@@ -273,44 +372,9 @@ async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 ✅ Оплата через Tribute - безопасно и удобно
 ✅ Работает с российскими картами  
-✅ Моментальное зачисление
+✅ Моментальное зачисление через webhook
 
 Выберите подходящий пакет:"""
-
-    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='Markdown')
-
-
-async def show_direct_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show direct coin purchase options"""
-    query = update.callback_query
-    await query.answer()
-
-    coin_packages = [
-        {"coins": 10, "price": 49, "id": "coins_10"},
-        {"coins": 50, "price": 199, "id": "coins_50"},
-        {"coins": 100, "price": 349, "id": "coins_100"},
-        {"coins": 200, "price": 599, "id": "coins_200"},
-        {"coins": 500, "price": 1299, "id": "coins_500"},
-        {"coins": 1000, "price": 2299, "id": "coins_1000"}
-    ]
-
-    keyboard = []
-    for pack in coin_packages:
-        discount = " 🔥" if pack["coins"] >= 200 else ""
-        button_text = f"💰 {pack['coins']} монет - {pack['price']} ₽{discount}"
-        callback_data = f"buy_coins_{pack['id']}"
-        keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
-
-    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="subscriptions")])
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    text = """💰 **Прямая покупка монет**
-
-Купите монеты без подписки!
-Монеты не истекают.
-
-🎯 Чем больше пакет - тем выгоднее!"""
 
     await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
@@ -321,29 +385,12 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
     user = query.from_user
     callback_data = query.data
 
-    # Determine package
+    # Определяем пакет
     if callback_data.startswith("buy_package_"):
         package_id = callback_data.replace("buy_package_", "")
         package = next((p for p in SUBSCRIPTION_PACKAGES if p['id'] == package_id), None)
-    elif callback_data.startswith("buy_coins_"):
-        coins_id = callback_data.replace("buy_coins_", "")
-        coins_amount = int(coins_id.replace("coins_", ""))
-        prices = {10: 49, 50: 199, 100: 349, 200: 599, 500: 1299, 1000: 2299}
-
-        if coins_amount in prices:
-            package = {
-                'id': coins_id,
-                'name': f'{coins_amount} монет',
-                'coins': coins_amount,
-                'price': prices[coins_amount],
-                'days': 0,
-                'description': f'Покупка {coins_amount} монет'
-            }
-        else:
-            await query.answer("❌ Пакет не найден", show_alert=True)
-            return
     else:
-        await query.answer("❌ Неверный формат", show_alert=True)
+        await query.answer("❌ Пакет не найден", show_alert=True)
         return
 
     if not package:
@@ -352,7 +399,7 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
 
     await query.answer()
 
-    # Get user
+    # Получаем пользователя
     db_user = await db_manager.get_user(user.id)
     if not db_user:
         await query.message.reply_text("❌ Используйте /start")
@@ -366,10 +413,10 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
         )
         return
 
-    # Create order
+    # Создаем order_id
     order_id = str(uuid.uuid4())
 
-    # Save to DB
+    # Сохраняем в БД
     async with db_manager.SessionLocal() as session:
         payment = Payment(
             user_id=db_user.id,
@@ -385,61 +432,61 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
         session.add(payment)
         await session.commit()
 
-    # Create Tribute payment
-    logger.info(f"🔄 Creating payment: {package['name']}, {package['price']} RUB")
+    # Создаем ссылку на оплату через Products API
+    logger.info(f"🔄 Creating payment link for: {package['name']}")
 
-    payment_result = await tribute.create_payment(
-        amount=package['price'],
-        order_id=order_id,
-        description=package['description'],
-        telegram_id=user.id
+    payment_result = await tribute.create_payment_link(
+        product_key=package['id'],
+        telegram_id=user.id,
+        custom_order_id=order_id
     )
 
     if not payment_result['success']:
         error_msg = payment_result.get('error', 'Unknown')
-        logger.error(f"❌ Payment failed: {error_msg}")
+        logger.error(f"❌ Payment link creation failed: {error_msg}")
 
+        # ИСПРАВЛЕНО: убрали parse_mode='Markdown' из сообщения об ошибке
         await query.message.reply_text(
-            f"❌ **Ошибка создания платежа**\n\n"
+            f"❌ Ошибка создания платежа\n\n"
             f"Причина: {error_msg}\n\n"
-            f"Проверьте:\n"
-            f"1️⃣ API ключ Tribute\n"
-            f"2️⃣ Баланс в Tribute\n\n"
-            f"Попробуйте позже.",
-            parse_mode='Markdown'
+            f"Попробуйте позже или обратитесь в поддержку."
         )
         return
 
-    # Success - show payment button
+    # Успех - показываем кнопку оплаты
     keyboard = [
         [InlineKeyboardButton("💳 Оплатить", url=payment_result['payment_url'])],
-        [InlineKeyboardButton("✅ Проверить", callback_data=f"check_payment_{order_id}")],
+        [InlineKeyboardButton("✅ Я оплатил", callback_data=f"check_payment_{order_id}")],
         [InlineKeyboardButton("❌ Отменить", callback_data="subscriptions")]
     ]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    period_text = f"📅 Период: {package['days']} дней\n" if package.get('days', 0) > 0 else ""
+    # ИСПРАВЛЕНО: правильное экранирование для MarkdownV2
+    order_id_short = order_id[:12]
 
-    text = f"""💳 **Оплата через Tribute**
+    text = f"""💳 *Оплата через Tribute*
 
 📦 Пакет: {package['name']}
 💰 Монет: {package['coins']}
-{period_text}💵 К оплате: {package['price']} ₽
+📅 Период: {package['days']} дней
+💵 К оплате: {package['price']} ₽
 
 ➡️ Нажмите "Оплатить"
-➡️ После оплаты нажмите "Проверить"
+➡️ После оплаты нажмите "Я оплатил"
 
-🆔 ID: `{order_id[:12]}`"""
+💡 Монеты зачислятся автоматически через несколько секунд после оплаты
+
+🆔 ID заказа: `{order_id_short}`"""
 
     await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
-    # Store info
+    # Сохраняем информацию
     context.user_data[f'payment_{order_id}'] = {
-        'tribute_id': payment_result['payment_id'],
         'amount': package['price'],
         'coins': package['coins'],
-        'days': package.get('days', 0)
+        'days': package.get('days', 0),
+        'package_id': package['id']
     }
 
 
@@ -449,27 +496,24 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
 
     order_id = query.data.replace("check_payment_", "")
-    payment_info = context.user_data.get(f'payment_{order_id}')
 
-    await query.answer("⏳ Проверяем...")
+    await query.answer("⏳ Проверяем статус оплаты...")
 
-    # Check with Tribute
+    # Проверяем статус в Tribute
     status_result = await tribute.check_payment_status(order_id)
 
     if not status_result['success']:
-        await query.answer("⏳ Попробуйте через минуту", show_alert=True)
+        await query.answer("⏳ Не удалось проверить статус. Попробуйте через минуту", show_alert=True)
         return
 
     status = status_result.get('status')
 
     if status == 'pending':
-        await query.answer("⏳ Обрабатывается...", show_alert=True)
+        await query.answer("⏳ Платеж еще обрабатывается. Подождите немного...", show_alert=True)
         return
 
     if status in ['paid', 'success', 'completed']:
-        await query.answer("✅ Оплачено!", show_alert=True)
-
-        # Update DB
+        # Проверяем, не начислены ли уже монеты
         from sqlalchemy import select
         async with db_manager.SessionLocal() as session:
             result = await session.execute(
@@ -477,138 +521,60 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             payment = result.scalar_one_or_none()
 
+            if payment and payment.status == 'completed':
+                await query.answer("✅ Монеты уже начислены!", show_alert=True)
+                return
+
             if payment and payment.status != 'completed':
                 payment.status = 'completed'
                 payment.completed_at = datetime.utcnow()
                 session.add(payment)
                 await session.commit()
 
-                # Add coins
+                # Начисляем монеты
                 db_user = await db_manager.get_user(user.id)
 
                 try:
-                    if payment.days > 0:
-                        await api_client.purchase_subscription(
-                            token=db_user.api_token,
-                            coins=payment.coins,
-                            days=payment.days,
-                            price=float(payment.amount)
-                        )
-                    else:
-                        balance = await api_client.get_balance(db_user.api_token)
-                        new_balance = balance['balance'] + payment.coins
-                        await api_client.set_balance(
-                            token=db_user.api_token,
-                            amount=new_balance,
-                            source='purchase'
-                        )
+                    # Покупка подписки с монетами
+                    await api_client.purchase_subscription(
+                        token=db_user.api_token,
+                        coins=payment.coins,
+                        days=payment.days,
+                        price=float(payment.amount)
+                    )
 
-                    success_text = f"""✅ **Платеж успешен!**
+                    success_text = f"""✅ **Оплата успешно подтверждена!**
 
 💰 Начислено: {payment.coins} монет
-"""
-                    if payment.days > 0:
-                        success_text += f"📅 На {payment.days} дней\n"
+📅 На {payment.days} дней
+💵 Оплачено: {payment.amount} ₽
 
-                    success_text += f"""💵 Оплачено: {payment.amount} ₽
+Спасибо за покупку! 🎉
 
-Спасибо! 🎉
+Монеты будут списываться автоматически через {payment.days} дней.
 /balance - проверить баланс"""
 
                     await query.message.reply_text(success_text, parse_mode='Markdown')
 
-                    # Cleanup
+                    # Очищаем данные
                     if f'payment_{order_id}' in context.user_data:
                         del context.user_data[f'payment_{order_id}']
 
                 except Exception as e:
                     logger.error(f"❌ Activation error: {e}")
                     await query.message.reply_text(
-                        f"⚠️ Ошибка начисления.\n"
-                        f"ID: {order_id[:12]}\n"
-                        f"Обратитесь в поддержку"
+                        f"⚠️ **Ошибка начисления монет**\n\n"
+                        f"Оплата прошла успешно, но возникла ошибка при начислении.\n"
+                        f"ID заказа: `{order_id[:12]}`\n\n"
+                        f"Обратитесь в поддержку с этим ID.",
+                        parse_mode='Markdown'
                     )
-
-
-async def start_promo_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start promo entry"""
-    query = update.callback_query
-    await query.answer()
-
-    await query.message.reply_text(
-        "🎁 **Введите промокод**\n\n"
-        "Отправьте промокод:",
-        parse_mode='Markdown'
-    )
-
-    return AWAITING_PROMO
-
-
-async def process_promo_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Process promo code"""
-    promo_code = update.message.text.strip().upper()
-
-    promo_codes = {
-        'WELCOME50': {'coins': 50, 'message': '+50 монет'},
-        'FITNESS100': {'coins': 100, 'message': '+100 монет'},
-    }
-
-    if promo_code in promo_codes:
-        promo = promo_codes[promo_code]
-        user = update.effective_user
-        db_user = await db_manager.get_user(user.id)
-
-        if db_user and db_user.api_token:
-            try:
-                balance = await api_client.get_balance(db_user.api_token)
-                new_balance = balance['balance'] + promo['coins']
-
-                await api_client.set_balance(
-                    token=db_user.api_token,
-                    amount=new_balance,
-                    source='promo'
-                )
-
-                await update.message.reply_text(
-                    f"✅ **Промокод активирован!**\n\n"
-                    f"🎁 {promo['message']}\n"
-                    f"💰 Баланс: {new_balance} монет",
-                    parse_mode='Markdown'
-                )
-            except Exception as e:
-                logger.error(f"Promo error: {e}")
-                await update.message.reply_text("❌ Ошибка")
-        else:
-            await update.message.reply_text("❌ Свяжите аккаунт")
     else:
-        await update.message.reply_text("❌ Неверный промокод")
-
-    return ConversationHandler.END
-
-
-async def cancel_promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancel promo"""
-    await update.message.reply_text("❌ Отменено")
-    return ConversationHandler.END
+        await query.answer("❌ Платеж не найден или отменен", show_alert=True)
 
 
 def register_payment_handlers(application):
     """Register handlers"""
-    if not validate_tribute_config():
-        logger.warning("⚠️ Tribute config validation failed!")
-
     application.add_handler(CallbackQueryHandler(show_subscriptions, pattern="^subscriptions$"))
-    application.add_handler(CallbackQueryHandler(show_direct_coins, pattern="^direct_coins$"))
     application.add_handler(CallbackQueryHandler(handle_package_selection, pattern="^buy_package_"))
-    application.add_handler(CallbackQueryHandler(handle_package_selection, pattern="^buy_coins_"))
     application.add_handler(CallbackQueryHandler(check_payment, pattern="^check_payment_"))
-
-    promo_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(start_promo_entry, pattern="^enter_promo$")],
-        states={
-            AWAITING_PROMO: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_promo_code)]
-        },
-        fallbacks=[CommandHandler("cancel", cancel_promo)]
-    )
-
-    application.add_handler(promo_handler)
