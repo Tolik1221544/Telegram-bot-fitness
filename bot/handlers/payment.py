@@ -17,15 +17,17 @@ class TributePayment:
         self.bot_username = "tribute"
         self.start_param = "sDlI"  # Параметр из ссылки заказчика
 
-    def get_payment_link(self, user_id: int) -> str:
-        """Создать ссылку на оплату с telegram_id"""
-        # Добавляем telegram_id для webhook
-        return f"https://t.me/{self.bot_username}/app?startapp={self.start_param}_tid{user_id}"
+    def get_payment_link(self, user_id: int, package_id: str) -> str:
+        """Создать ссылку на оплату с telegram_id и package_id"""
+        # Передаем telegram_id в metadata через URL параметр
+        return f"https://t.me/{self.bot_username}/app?startapp={self.start_param}_tid{user_id}_pkg{package_id}"
 
+
+# Пакеты подписок (как на скрине заказчика)
 SUBSCRIPTION_PACKAGES = [
     {
         'id': 'year',
-        'name': '📅 Год',
+        'name': 'Год',
         'coins': 1200,
         'days': 365,
         'price': 20,
@@ -34,7 +36,7 @@ SUBSCRIPTION_PACKAGES = [
     },
     {
         'id': '6months',
-        'name': '📆 6 месяцев',
+        'name': '6 месяцев',
         'coins': 600,
         'days': 180,
         'price': 10,
@@ -43,7 +45,7 @@ SUBSCRIPTION_PACKAGES = [
     },
     {
         'id': '3months',
-        'name': '📆 3 месяца',
+        'name': '3 месяца',
         'coins': 300,
         'days': 90,
         'price': 5,
@@ -52,7 +54,7 @@ SUBSCRIPTION_PACKAGES = [
     },
     {
         'id': '1month',
-        'name': '📅 1 месяц',
+        'name': '1 месяц',
         'coins': 100,
         'days': 30,
         'price': 2,
@@ -72,7 +74,7 @@ async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE)
     keyboard = []
 
     for package in SUBSCRIPTION_PACKAGES:
-        button_text = f"{package['name']} - {package['price']} {package['currency']}"
+        button_text = f"📅 {package['name']} - {package['price']} {package['currency']}"
         callback_data = f"buy_package_{package['id']}"
         keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
 
@@ -145,10 +147,11 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
         session.add(payment)
         await session.commit()
 
-    # Получаем ссылку на оплату с telegram_id
-    payment_url = tribute.get_payment_link(user.id)
+    # Получаем ссылку на оплату с telegram_id и package_id
+    payment_url = tribute.get_payment_link(user.id, package['id'])
 
     logger.info(f"💳 User {user.id} started payment for {package['name']}")
+    logger.info(f"💳 Payment URL: {payment_url}")
 
     # Показываем пользователю
     keyboard = [
@@ -167,12 +170,12 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
 
 **Как оплатить:**
 1️⃣ Нажмите "💳 Оплатить подписку"
-2️⃣ Выберите период в Tribute
+2️⃣ Выберите период: **{package['name']}** (важно!)
 3️⃣ Оплатите удобным способом
 
 💡 **Монеты зачислятся автоматически** в течение 1-2 минут после оплаты!
 
-Не нужно возвращаться в бот - всё произойдет само 🎉"""
+✅ Бэкенд автоматически проверит оплату через Tribute API"""
 
     await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 

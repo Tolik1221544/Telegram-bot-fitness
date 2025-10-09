@@ -1,11 +1,12 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
-from bot.database import db_manager, User
+from bot.database import db_manager, User, CoinSpending
 from bot.api_client import api_client
 from bot.config import config
 from bot.utils.tracking import track_referral
 import logging
 import re
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -89,34 +90,140 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /balance command"""
+    user = update.effective_user
+    db_user = await db_manager.get_user(user.id)
+
+    if not db_user or not db_user.api_token:
+        keyboard = [[InlineKeyboardButton("🔗 Связать аккаунт", callback_data="link_account")]]
+        await update.message.reply_text(
+            "❌ Сначала свяжите аккаунт с приложением",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    try:
+        balance = await api_client.get_balance(db_user.api_token)
+
+        text = f"""💰 **Ваш баланс**
+
+Монет: {balance.get('balance', 0)}
+"""
+
+        if balance.get('hasActiveSubscription'):
+            expiry = balance.get('subscriptionExpiresAt', '')
+            if expiry and len(expiry) >= 10:
+                expiry = expiry[:10]
+            text += f"\n📅 Подписка до: {expiry}"
+        else:
+            text += "\n📅 Подписка: не активна"
+
+        keyboard = [[InlineKeyboardButton("💳 Купить подписку", callback_data="subscriptions")]]
+
+        await update.message.reply_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+
+    except Exception as e:
+        logger.error(f"Error getting balance: {e}")
+        await update.message.reply_text("❌ Ошибка получения баланса. Попробуйте позже.")
+
+
+async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /subscribe command"""
+    user = update.effective_user
+    db_user = await db_manager.get_user(user.id)
+
+    if not db_user:
+        await update.message.reply_text("❌ Используйте /start для начала работы")
+        return
+
+    if not db_user.api_token:
+        keyboard = [[InlineKeyboardButton("🔗 Связать аккаунт", callback_data="link_account")]]
+        await update.message.reply_text(
+            "❌ Сначала свяжите аккаунт с приложением",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    # Show subscription packages
+    from bot.handlers.payment import SUBSCRIPTION_PACKAGES
+
+    keyboard = []
+
+    for package in SUBSCRIPTION_PACKAGES:
+        button_text = f"{package['name']} - {package['price']} {package['currency']}"
+        if package.get('savings'):
+            button_text += f" (скидка {package['savings']})"
+        callback_data = f"buy_package_{package['id']}"
+        keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    text = """💳 **LightWeight PAY**
+
+Здесь вы можете купить LW coins со скидкой, оплатить картой любой страны и любым удобным способом
+
+**Выберите период подписки:**"""
+
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command"""
-    help_text = """📖 Помощь по боту
+    help_text = """📖 **Помощь по боту**
 
-Основные команды:
+**Основные команды:**
 /start - Главное меню
 /help - Эта справка
 /balance - Проверить баланс
 /subscribe - Купить подписку
-/stats - Статистика использования
+/admin - Админ панель (для админов)
 
-Как связать аккаунт:
+**Как связать аккаунт:**
 1. Нажмите "🔗 Связать аккаунт"
 2. Введите email от приложения
 3. Введите код подтверждения
 
-Покупка подписки:
-1. Нажмите "💳 Подписки"
+**Покупка подписки:**
+1. Нажмите /subscribe или "💳 Подписки"
 2. Выберите пакет
-3. Оплатите через Tribute (работает из РФ)
+3. Оплатите через Tribute
 
-Проблемы?
-Напишите в поддержку"""
+**Проблемы?**
+Напишите в поддержку @support"""
 
-    await update.message.reply_text(help_text)
+    await update.message.reply_text(help_text, parse_mode='Markdown')
+
+
+async def track_coin_usage(telegram_id: int, amount: int, feature: str, description: str = None):
+    """Записать использование монет для статистики"""
+    try:
+        async with db_manager.SessionLocal() as session:
+            db_user = await db_manager.get_user(telegram_id)
+
+            spending = CoinSpending(
+                telegram_id=telegram_id,
+                api_user_id=db_user.api_user_id if db_user else None,
+                amount=amount,
+                feature=feature,
+                description=description,
+                date=datetime.utcnow().strftime('%Y-%m-%d')
+            )
+            session.add(spending)
+            await session.commit()
+
+            logger.info(f"Tracked coin usage: {telegram_id} spent {amount} coins on {feature}")
+    except Exception as e:
+        logger.error(f"Error tracking coin usage: {e}")
 
 
 # Register handlers
 def register_start_handlers(application):
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("balance", balance_command))
+    application.add_handler(CommandHandler("subscribe", subscribe_command))

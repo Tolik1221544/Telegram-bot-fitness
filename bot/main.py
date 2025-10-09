@@ -20,22 +20,12 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+
 async def post_init(application: Application):
     """Initialize bot after startup"""
     # Initialize database
     await db_manager.init_db()
     logger.info("Database initialized")
-
-    # Initialize Tribute products
-    from bot.handlers.payment import tribute
-    try:
-        logger.info("🛍️ Starting Tribute products initialization...")
-        await tribute.init_products()
-        logger.info("✅ Tribute products initialized successfully")
-        logger.info(f"📦 Product IDs: {tribute.product_ids}")
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize Tribute products: {e}")
-        logger.exception("Full traceback:")
 
     # Set bot commands
     await application.bot.set_my_commands([
@@ -46,6 +36,8 @@ async def post_init(application: Application):
     ])
     logger.info("Bot commands set")
 
+    logger.info("✅ Bot initialized successfully - NO product initialization needed")
+
 
 def main():
     """Start the bot"""
@@ -54,7 +46,7 @@ def main():
 
     # Register handlers
     start.register_start_handlers(application)
-    user.register_user_handlers(application)  # Добавили
+    user.register_user_handlers(application)
     admin.register_admin_handlers(application)
     payment.register_payment_handlers(application)
 
@@ -69,7 +61,10 @@ def main():
     application.add_error_handler(error_handler)
 
     # Start bot
-    logger.info("Starting bot...")
+    logger.info("🚀 Starting bot...")
+    logger.info("💳 Tribute integration: DIRECT LINK MODE")
+    logger.info("🔗 Payment URL: https://t.me/tribute/app?startapp=sDlI")
+    logger.info("📡 Webhook: https://api.lightweightfit.com:60170/api/tribute/webhook")
     application.run_polling(drop_pending_updates=True)
 
 

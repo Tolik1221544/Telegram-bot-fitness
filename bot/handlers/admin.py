@@ -1,7 +1,7 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters, \
     ConversationHandler
-from bot.database import db_manager, User, Payment, CoinSpending, ReferralLink
+from bot.database import db_manager, User, Payment, ReferralLink
 from bot.api_client import api_client
 from bot.config import config
 from bot.utils.charts import generate_spending_chart, generate_revenue_chart
@@ -35,7 +35,6 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔗 Создать реф. ссылку", callback_data="admin_create_referral")],
         [InlineKeyboardButton("📋 Список реф. ссылок", callback_data="admin_list_referrals")],
         [InlineKeyboardButton("👥 Статистика пользователей", callback_data="admin_user_stats")],
-        [InlineKeyboardButton("💳 Незавершенные платежи", callback_data="admin_pending_payments")],
         [InlineKeyboardButton("🔙 Назад", callback_data="start")]
     ]
 
@@ -128,41 +127,7 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await show_user_stats(query.message)
         return ConversationHandler.END
 
-    elif query.data == "admin_pending_payments":
-        await show_pending_payments(query.message)
-        return ConversationHandler.END
-
     return ConversationHandler.END
-
-
-async def show_pending_payments(message):
-    """Показать незавершенные платежи"""
-    async with db_manager.SessionLocal() as session:
-        result = await session.execute(
-            select(Payment)
-            .where(Payment.status == 'pending')
-            .order_by(Payment.created_at.desc())
-            .limit(10)
-        )
-        payments = result.scalars().all()
-
-    if not payments:
-        await message.reply_text("✅ Нет незавершенных платежей")
-        return
-
-    text = "💳 **Незавершенные платежи:**\n\n"
-
-    for payment in payments:
-        text += f"ID: `{payment.payment_id[:8]}...`\n"
-        text += f"User: {payment.telegram_id}\n"
-        text += f"Сумма: {payment.amount} {payment.currency}\n"
-        text += f"Монет: {payment.coins}\n"
-        text += f"Дата: {payment.created_at.strftime('%d.%m %H:%M')}\n"
-        text += f"---\n"
-
-    text += "\nИспользуйте:\n`/confirm_payment <telegram_id> <coins>`"
-
-    await message.reply_text(text, parse_mode='Markdown')
 
 
 async def set_registration_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -226,26 +191,6 @@ async def set_user_coins_amount(update: Update, context: ContextTypes.DEFAULT_TY
             # Set balance
             await api_client.set_balance(token, coins, 'admin')
 
-            # Записываем в статистику трат
-            async with db_manager.SessionLocal() as session:
-                # Находим пользователя по email
-                result = await session.execute(
-                    select(User).where(User.email == email)
-                )
-                user = result.scalar_one_or_none()
-
-                if user:
-                    spending = CoinSpending(
-                        telegram_id=user.telegram_id,
-                        api_user_id=user.api_user_id,
-                        amount=coins,
-                        feature='admin_credit',
-                        description='Начисление от администратора',
-                        date=datetime.utcnow().strftime('%Y-%m-%d')
-                    )
-                    session.add(spending)
-                    await session.commit()
-
             await update.message.reply_text(
                 f"✅ Установлено {coins} монет для {email}"
             )
@@ -307,36 +252,28 @@ async def send_spending_chart(message):
     """Send coin spending chart"""
     try:
         async with db_manager.SessionLocal() as session:
+            # Получаем транзакции за последние 30 дней
             start_date = datetime.utcnow() - timedelta(days=30)
 
-            # Получаем данные о тратах
+            # Импортируем здесь, чтобы избежать циклических импортов
+            from bot.database import LwCoinTransaction
+
             result = await session.execute(
                 select(
-                    CoinSpending.date,
-                    func.sum(CoinSpending.amount).label('total')
+                    func.date(LwCoinTransaction.created_at).label('date'),
+                    func.sum(LwCoinTransaction.amount).label('total')
                 )
-                .where(CoinSpending.timestamp >= start_date)
-                .group_by(CoinSpending.date)
-                .order_by(CoinSpending.date)
+                .where(LwCoinTransaction.created_at >= start_date)
+                .where(LwCoinTransaction.amount < 0)  # Только траты
+                .group_by(func.date(LwCoinTransaction.created_at))
+                .order_by(func.date(LwCoinTransaction.created_at))
             )
 
             data = result.all()
 
         if not data:
-            # Генерируем тестовые данные для демонстрации
-            from datetime import date
-            today = date.today()
-            data = []
-            for i in range(30):
-                day = today - timedelta(days=29 - i)
-                # Случайные траты от 50 до 500 монет
-                import random
-                amount = random.randint(50, 500)
-                data.append((day.strftime('%Y-%m-%d'), amount))
-
-            await message.reply_text(
-                "📊 Нет реальных данных о тратах. Показываю демо-график..."
-            )
+            await message.reply_text("📊 Нет данных о тратах за последние 30 дней")
+            return
 
         # Generate chart
         chart_path = await generate_spending_chart(data)
@@ -352,6 +289,7 @@ async def send_spending_chart(message):
 
     except Exception as e:
         logger.error(f"Error generating spending chart: {e}")
+        logger.exception("Full traceback:")
         await message.reply_text("❌ Ошибка генерации графика")
 
 
@@ -375,19 +313,8 @@ async def send_revenue_chart(message):
             data = result.all()
 
         if not data:
-            # Генерируем демо-данные
-            from datetime import date
-            today = date.today()
-            data = []
-            for i in range(30):
-                day = today - timedelta(days=29 - i)
-                import random
-                amount = random.randint(0, 100)
-                data.append((day, amount))
-
-            await message.reply_text(
-                "📈 Нет реальных данных о доходах. Показываю демо-график..."
-            )
+            await message.reply_text("📈 Нет данных о доходах за последние 30 дней")
+            return
 
         # Generate chart
         chart_path = await generate_revenue_chart(data)
@@ -402,6 +329,7 @@ async def send_revenue_chart(message):
 
     except Exception as e:
         logger.error(f"Error generating revenue chart: {e}")
+        logger.exception("Full traceback:")
         await message.reply_text("❌ Ошибка генерации графика")
 
 
@@ -491,7 +419,6 @@ async def admin_callback_button(update: Update, context: ContextTypes.DEFAULT_TY
         [InlineKeyboardButton("🔗 Создать реф. ссылку", callback_data="admin_create_referral")],
         [InlineKeyboardButton("📋 Список реф. ссылок", callback_data="admin_list_referrals")],
         [InlineKeyboardButton("👥 Статистика пользователей", callback_data="admin_user_stats")],
-        [InlineKeyboardButton("💳 Незавершенные платежи", callback_data="admin_pending_payments")],
         [InlineKeyboardButton("🔙 Назад", callback_data="start")]
     ]
 
@@ -508,6 +435,7 @@ async def admin_callback_button(update: Update, context: ContextTypes.DEFAULT_TY
 def register_admin_handlers(application):
     """Register admin handlers"""
     application.add_handler(CommandHandler("admin", admin_command))
+
     application.add_handler(CallbackQueryHandler(admin_callback_button, pattern="^admin$"))
 
     admin_conv = ConversationHandler(
@@ -529,49 +457,4 @@ def register_admin_handlers(application):
         fallbacks=[CommandHandler("cancel", cancel_admin_action)]
     )
 
-    application.add_handler(admin_conv)now() - timedelta(days=30)
-
-            result = await session.execute(
-                select(
-                    func.date(Payment.completed_at).label('date'),
-                    func.sum(Payment.amount).label('total')
-                )
-                .where(Payment.status == 'completed')
-                .where(Payment.completed_at >= start_date)
-                .group_by(func.date(Payment.completed_at))
-                .order_by(func.date(Payment.completed_at))
-            )
-
-            data = result.all()
-
-        if not data:
-            # Генерируем демо-данные
-            from datetime import date
-
-            today = date.today()
-            data = []
-            for i in range(30):
-                day = today - timedelta(days=29 - i)
-                import random
-
-                amount = random.randint(0, 100)
-                data.append((day, amount))
-
-            await message.reply_text(
-                "📈 Нет реальных данных о доходах. Показываю демо-график..."
-            )
-
-            # Generate chart
-        chart_path = await generate_revenue_chart(data)
-
-        with open(chart_path, 'rb') as photo:
-            await message.reply_photo(
-                photo=photo,
-                caption="📈 График доходов за 30 дней"
-            )
-
-        os.remove(chart_path)
-
-    except Exception as e:
-        logger.error(f"Error generating revenue chart: {e}")
-        await message.reply_text("❌ Ошибка генерации графика")
+    application.add_handler(admin_conv)

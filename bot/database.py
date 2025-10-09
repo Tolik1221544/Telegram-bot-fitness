@@ -49,7 +49,7 @@ class Payment(Base):
 
     payment_id = Column(String(255), unique=True)
     amount = Column(Float)
-    currency = Column(String(10), default='RUB')
+    currency = Column(String(10), default='EUR')
     status = Column(String(50))  # pending, completed, failed
 
     package_id = Column(String(100))
@@ -83,20 +83,22 @@ class ReferralLink(Base):
     is_active = Column(Boolean, default=True)
 
 
-class CoinSpending(Base):
-    """История трат монет для графиков"""
-    __tablename__ = 'coin_spending'
+class LwCoinTransaction(Base):
+    """История транзакций монет для графиков"""
+    __tablename__ = 'lw_coin_transactions'
 
     id = Column(Integer, primary_key=True)
+    user_id = Column(Integer)
     telegram_id = Column(Integer, nullable=False)
     api_user_id = Column(String(255))
 
-    amount = Column(Integer, nullable=False)
-    feature = Column(String(100))  # photo, voice, text
+    amount = Column(Integer, nullable=False)  # Может быть отрицательным для трат
+    type = Column(String(100))  # spent, earned, bonus, purchase
+    feature_used = Column(String(100))  # photo, voice, text
     description = Column(Text)
 
-    timestamp = Column(DateTime, default=datetime.utcnow)
-    date = Column(String(10))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    date = Column(String(10))  # YYYY-MM-DD для группировки
 
 
 # Database manager
