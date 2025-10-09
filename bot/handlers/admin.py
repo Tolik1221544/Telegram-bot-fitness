@@ -439,9 +439,43 @@ async def cancel_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ConversationHandler.END
 
 
+async def admin_callback_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle admin button click from main menu"""
+    query = update.callback_query
+    user = query.from_user
+
+    if user.id not in config.ADMIN_IDS:
+        await query.answer("❌ Недостаточно прав", show_alert=True)
+        return
+
+    await query.answer()
+
+    keyboard = [
+        [InlineKeyboardButton("💰 Установить бонус регистрации", callback_data="admin_set_reg_coins")],
+        [InlineKeyboardButton("💸 Установить монеты пользователю", callback_data="admin_set_user_coins")],
+        [InlineKeyboardButton("📊 График трат монет", callback_data="admin_spending_chart")],
+        [InlineKeyboardButton("📈 График доходов", callback_data="admin_revenue_chart")],
+        [InlineKeyboardButton("🔗 Создать реф. ссылку", callback_data="admin_create_referral")],
+        [InlineKeyboardButton("📋 Список реф. ссылок", callback_data="admin_list_referrals")],
+        [InlineKeyboardButton("👥 Статистика пользователей", callback_data="admin_user_stats")],
+        [InlineKeyboardButton("🛍️ Инициализировать Tribute", callback_data="admin_init_tribute")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="start")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    stats_text = await get_admin_stats()
+
+    await query.message.edit_text(
+        f"⚙️ **Админ панель**\n\n{stats_text}",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
 def register_admin_handlers(application):
     """Register admin handlers"""
     application.add_handler(CommandHandler("admin", admin_command))
+
+    application.add_handler(CallbackQueryHandler(admin_callback_button, pattern="^admin$"))
 
     admin_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(handle_admin_callback, pattern="^admin_")],

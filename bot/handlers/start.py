@@ -38,9 +38,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if referral_code:
             await track_referral(referral_code, user.id)
 
-        welcome_text = f"""🎉 Добро пожаловать в Fitness Tracker Bot!
-
-Вы получили {config.DEFAULT_REGISTRATION_COINS} монет в подарок! 🎁
+        welcome_text = f"""🎉 Добро пожаловать в LightweightPay Bot!
 
 Что умеет этот бот:
 💰 Управление монетами и подписками

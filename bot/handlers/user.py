@@ -1,5 +1,6 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, CallbackQueryHandler, ConversationHandler, MessageHandler, filters, CommandHandler
+from telegram.ext import ContextTypes, CallbackQueryHandler, ConversationHandler, MessageHandler, filters, \
+    CommandHandler
 from bot.database import db_manager
 from bot.api_client import api_client
 from bot.config import config
@@ -7,7 +8,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# ✅ УНИКАЛЬНЫЕ состояния для user - начинаются с 200
 USER_AWAITING_EMAIL = 200
 USER_AWAITING_CODE = 201
 
@@ -77,6 +77,7 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
+        from datetime import datetime
         stats = await api_client.get_user_stats(db_user.api_token)
 
         text = f"""📊 **Ваша статистика**
@@ -108,9 +109,17 @@ async def start_link_account(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer()
 
+    context.user_data.clear()
+
+    logger.info(f"User {query.from_user.id} starting account linking")
+
+    keyboard = [[InlineKeyboardButton("🔙 Отменить", callback_data="cancel_linking")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
     await query.message.edit_text(
         "🔗 **Связывание аккаунта**\n\n"
-        "Введите email, который используете в приложении Fitness Tracker:",
+        "Введите email, который используете в приложении Lightweight:",
+        reply_markup=reply_markup,
         parse_mode='Markdown'
     )
 
@@ -124,7 +133,13 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Validate email
     import re
     if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
-        await update.message.reply_text("❌ Неверный формат email. Попробуйте снова:")
+        keyboard = [[InlineKeyboardButton("🔙 Отменить", callback_data="cancel_linking")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            "❌ Неверный формат email. Попробуйте снова:",
+            reply_markup=reply_markup
+        )
         return USER_AWAITING_EMAIL
 
     try:
@@ -133,23 +148,38 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         if success:
             context.user_data['linking_email'] = email
+
+            keyboard = [[InlineKeyboardButton("🔙 Отменить", callback_data="cancel_linking")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
             await update.message.reply_text(
                 f"✅ Код подтверждения отправлен на {email}\n\n"
-                "Введите код из письма:"
+                "Введите код из письма:",
+                reply_markup=reply_markup
             )
             return USER_AWAITING_CODE
         else:
+            keyboard = [[InlineKeyboardButton("🔙 Отменить", callback_data="cancel_linking")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
             await update.message.reply_text(
-                "❌ Не удалось отправить код. Проверьте email:"
+                "❌ Не удалось отправить код. Проверьте email:",
+                reply_markup=reply_markup
             )
             return USER_AWAITING_EMAIL
 
     except Exception as e:
         logger.error(f"Error sending verification code: {e}")
+
+        keyboard = [[InlineKeyboardButton("🔙 В меню", callback_data="start")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
         await update.message.reply_text(
-            "❌ Ошибка отправки кода. Попробуйте позже.\n"
-            "/start - вернуться в меню"
+            "❌ Ошибка отправки кода. Попробуйте позже.",
+            reply_markup=reply_markup
         )
+
+        context.user_data.clear()
         return ConversationHandler.END
 
 
@@ -159,7 +189,15 @@ async def handle_code_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     email = context.user_data.get('linking_email')
 
     if not email:
-        await update.message.reply_text("❌ Ошибка. Начните заново: /start")
+        keyboard = [[InlineKeyboardButton("🔙 В меню", callback_data="start")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            "❌ Ошибка. Начните заново: /start",
+            reply_markup=reply_markup
+        )
+
+        context.user_data.clear()
         return ConversationHandler.END
 
     try:
@@ -178,37 +216,70 @@ async def handle_code_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 session.add(db_user)
                 await session.commit()
 
+            keyboard = [[InlineKeyboardButton("🏠 В меню", callback_data="start")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
             await update.message.reply_text(
                 "✅ Аккаунт успешно связан!\n\n"
-                "Теперь вы можете пользоваться всеми функциями бота.\n"
-                "/start - главное меню"
+                "Теперь вы можете пользоваться всеми функциями бота.",
+                reply_markup=reply_markup
             )
 
-            # Clear user data
             context.user_data.clear()
+
+            logger.info(f"User {user.id} successfully linked account")
 
             return ConversationHandler.END
         else:
+            keyboard = [[InlineKeyboardButton("🔙 Отменить", callback_data="cancel_linking")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
             await update.message.reply_text(
-                "❌ Неверный код. Попробуйте снова:"
+                "❌ Неверный код. Попробуйте снова:",
+                reply_markup=reply_markup
             )
             return USER_AWAITING_CODE
 
     except Exception as e:
         logger.error(f"Error confirming code: {e}")
+
+        keyboard = [[InlineKeyboardButton("🔙 В меню", callback_data="start")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
         await update.message.reply_text(
-            "❌ Ошибка подтверждения. Попробуйте позже.\n"
-            "/start - вернуться в меню"
+            "❌ Ошибка подтверждения. Попробуйте позже.",
+            reply_markup=reply_markup
         )
+
+        context.user_data.clear()
         return ConversationHandler.END
 
 
 async def cancel_linking(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel account linking"""
-    await update.message.reply_text(
-        "❌ Связывание отменено.\n"
-        "/start - вернуться в меню"
-    )
+    query = update.callback_query
+
+    logger.info(f"User {update.effective_user.id} cancelled account linking")
+
+    if query:
+        await query.answer("❌ Отменено")
+
+        keyboard = [[InlineKeyboardButton("🏠 В меню", callback_data="start")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.message.edit_text(
+            "❌ Связывание отменено.",
+            reply_markup=reply_markup
+        )
+    else:
+        keyboard = [[InlineKeyboardButton("🏠 В меню", callback_data="start")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            "❌ Связывание отменено.",
+            reply_markup=reply_markup
+        )
+
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -262,6 +333,8 @@ async def back_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
+    context.user_data.clear()
+
     user = query.from_user
     db_user = await db_manager.get_user(user.id)
 
@@ -303,21 +376,38 @@ async def back_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def register_user_handlers(application):
     """Register user handlers"""
-    # Callback handlers
     application.add_handler(CallbackQueryHandler(back_to_start, pattern="^start$"))
+
     application.add_handler(CallbackQueryHandler(show_balance, pattern="^balance$"))
     application.add_handler(CallbackQueryHandler(show_stats, pattern="^stats$"))
     application.add_handler(CallbackQueryHandler(show_restore, pattern="^restore$"))
     application.add_handler(CallbackQueryHandler(show_help, pattern="^help$"))
 
-    # ✅ ИСПРАВЛЕННЫЙ ConversationHandler с уникальными состояниями
     link_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(start_link_account, pattern="^link_account$")],
+        entry_points=[
+            CallbackQueryHandler(start_link_account, pattern="^link_account$")
+        ],
         states={
-            USER_AWAITING_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email_input)],
-            USER_AWAITING_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code_input)],
+            USER_AWAITING_EMAIL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email_input),
+                CallbackQueryHandler(cancel_linking, pattern="^cancel_linking$")
+            ],
+            USER_AWAITING_CODE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code_input),
+                CallbackQueryHandler(cancel_linking, pattern="^cancel_linking$")
+            ],
         },
-        fallbacks=[CommandHandler("cancel", cancel_linking)]
+        fallbacks=[
+            CommandHandler("cancel", cancel_linking),
+            CommandHandler("start", cancel_linking),
+            CallbackQueryHandler(cancel_linking, pattern="^cancel_linking$"),
+            CallbackQueryHandler(back_to_start, pattern="^start$")
+        ],
+
+        per_user=True,
+        per_chat=True,
+        per_message=False,
+        allow_reentry=True
     )
 
     application.add_handler(link_conv)
