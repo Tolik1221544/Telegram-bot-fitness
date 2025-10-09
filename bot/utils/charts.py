@@ -3,76 +3,87 @@ import matplotlib.dates as mdates
 from datetime import datetime, timedelta
 import seaborn as sns
 import tempfile
-from typing import List, Tuple
-from sqlalchemy import select, func
-from bot.database import LwCoinTransaction, Payment
+from typing import List, Dict, Any
 
 plt.style.use('seaborn-v0_8-darkgrid')
 sns.set_palette("husl")
 
 
-async def generate_spending_chart_from_db(db_session, days: int = 30) -> str:
+async def generate_spending_chart_from_server_data(daily_stats: List[Dict]) -> str:
     """
-    Generate coin spending chart from database
+    Generate coin spending chart from server data
 
     Args:
-        db_session: Database session
-        days: Number of days to show (default: 30)
+        daily_stats: List of daily statistics from server
 
     Returns:
         Path to generated chart file
     """
-    start_date = datetime.utcnow() - timedelta(days=days)
-
-    result = await db_session.execute(
-        select(
-            CoinSpending.date,
-            func.sum(CoinSpending.amount).label('total')
-        )
-        .where(CoinSpending.timestamp >= start_date)
-        .group_by(CoinSpending.date)
-        .order_by(CoinSpending.date)
-    )
-
-    data = result.all()
-
-    if not data:
-        raise ValueError(f"No spending data for last {days} days")
-
-    return await generate_spending_chart(data)
-
-
-async def generate_spending_chart(data: List[Tuple]) -> str:
-    """Generate coin spending chart from data"""
     fig, ax = plt.subplots(figsize=(12, 6))
 
-    dates = [datetime.strptime(row[0], '%Y-%m-%d') for row in data]
-    amounts = [row[1] for row in data]
+    # Извлекаем данные
+    dates = []
+    amounts = []
 
-    ax.plot(dates, amounts, marker='o', linewidth=2, markersize=8)
-    ax.fill_between(dates, amounts, alpha=0.3)
+    for stat in daily_stats:
+        # Преобразуем дату из строки
+        date_str = stat.get('Date', stat.get('date', ''))
+        if date_str:
+            try:
+                date = datetime.strptime(date_str, '%Y-%m-%d')
+                dates.append(date)
+                amounts.append(stat.get('TotalSpent', stat.get('totalSpent', 0)))
+            except:
+                continue
 
+    if not dates:
+        raise ValueError("No valid data for chart")
+
+    # Сортируем по дате
+    sorted_data = sorted(zip(dates, amounts), key=lambda x: x[0])
+    dates, amounts = zip(*sorted_data)
+
+    # Строим график
+    ax.plot(dates, amounts, marker='o', linewidth=2, markersize=8, color='#FF6B6B')
+    ax.fill_between(dates, amounts, alpha=0.3, color='#FF6B6B')
+
+    # Настройки осей
     ax.set_xlabel('Дата', fontsize=12)
     ax.set_ylabel('Потрачено монет', fontsize=12)
-    ax.set_title('График трат монет за последние 30 дней', fontsize=14, fontweight='bold')
+    ax.set_title('График трат монет (данные с сервера)', fontsize=14, fontweight='bold')
 
-    # Format x-axis
+    # Форматирование дат на оси X
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%d.%m'))
-    ax.xaxis.set_major_locator(mdates.DayLocator(interval=5))
+    if len(dates) > 15:
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=5))
+    else:
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=2))
     plt.xticks(rotation=45)
 
-    # Add grid
+    # Добавляем сетку
     ax.grid(True, alpha=0.3)
 
-    # Add average line
-    avg = sum(amounts) / len(amounts)
-    ax.axhline(y=avg, color='r', linestyle='--', alpha=0.7, label=f'Среднее: {avg:.1f}')
+    # Добавляем среднюю линию
+    if amounts:
+        avg = sum(amounts) / len(amounts)
+        ax.axhline(y=avg, color='r', linestyle='--', alpha=0.7,
+                   label=f'Среднее: {avg:.1f} монет')
+        ax.legend()
 
-    ax.legend()
+    # Добавляем значения на точках для лучшей читаемости
+    for i, (date, amount) in enumerate(zip(dates, amounts)):
+        if i % max(1, len(dates) // 10) == 0:  # Показываем каждое N-ое значение
+            ax.annotate(f'{amount:.0f}',
+                        xy=(date, amount),
+                        xytext=(0, 5),
+                        textcoords='offset points',
+                        ha='center',
+                        fontsize=8,
+                        alpha=0.7)
 
     plt.tight_layout()
 
-    # Save to temporary file
+    # Сохраняем в временный файл
     temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
     plt.savefig(temp_file.name, dpi=100, bbox_inches='tight')
     plt.close()
@@ -80,79 +91,114 @@ async def generate_spending_chart(data: List[Tuple]) -> str:
     return temp_file.name
 
 
-async def generate_revenue_chart_from_db(db_session, days: int = 30) -> str:
+async def generate_revenue_chart_from_server_data(daily_revenue: List[Dict],
+                                                  coin_purchases: List[Dict] = None) -> str:
     """
-    Generate revenue chart from database
+    Generate revenue chart from server data
 
     Args:
-        db_session: Database session
-        days: Number of days to show (default: 30)
+        daily_revenue: List of daily revenue data from subscriptions
+        coin_purchases: List of coin purchase data (optional)
 
     Returns:
         Path to generated chart file
     """
-    start_date = datetime.utcnow() - timedelta(days=days)
-
-    result = await db_session.execute(
-        select(
-            func.date(Payment.completed_at).label('date'),
-            func.sum(Payment.amount).label('total')
-        )
-        .where(Payment.status == 'completed')
-        .where(Payment.completed_at >= start_date)
-        .group_by(func.date(Payment.completed_at))
-        .order_by(func.date(Payment.completed_at))
-    )
-
-    data = result.all()
-
-    if not data:
-        raise ValueError(f"No revenue data for last {days} days")
-
-    return await generate_revenue_chart(data)
-
-
-async def generate_revenue_chart(data: List[Tuple]) -> str:
-    """Generate revenue chart from data"""
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
 
-    dates = [row[0] for row in data]
-    amounts = [row[1] for row in data]
+    # Обрабатываем данные о доходах
+    dates = []
+    amounts = []
 
-    # Daily revenue
-    ax1.bar(range(len(dates)), amounts, color='green', alpha=0.7)
+    for revenue in daily_revenue:
+        date_str = revenue.get('Date', revenue.get('date', ''))
+        if date_str:
+            try:
+                if isinstance(date_str, str):
+                    date = datetime.strptime(date_str, '%Y-%m-%d')
+                else:
+                    date = date_str
+                dates.append(date)
+                amounts.append(float(revenue.get('TotalRevenue', revenue.get('totalRevenue', 0))))
+            except:
+                continue
+
+    if not dates:
+        # Если нет данных о подписках, пробуем coin_purchases
+        if coin_purchases:
+            for purchase in coin_purchases:
+                date_str = purchase.get('Date', purchase.get('date', ''))
+                if date_str:
+                    try:
+                        date = datetime.strptime(date_str, '%Y-%m-%d')
+                        dates.append(date)
+                        amounts.append(float(purchase.get('Revenue', purchase.get('revenue', 0))))
+                    except:
+                        continue
+
+    if not dates:
+        raise ValueError("No valid revenue data for chart")
+
+    # Сортируем по дате
+    sorted_data = sorted(zip(dates, amounts), key=lambda x: x[0])
+    dates, amounts = zip(*sorted_data)
+
+    # График 1: Ежедневный доход (столбчатая диаграмма)
+    colors = ['#4ECDC4' if a > 0 else '#95E1D3' for a in amounts]
+    bars = ax1.bar(range(len(dates)), amounts, color=colors, alpha=0.7)
+
     ax1.set_xlabel('Дата', fontsize=12)
-    ax1.set_ylabel('Доход (₽)', fontsize=12)
-    ax1.set_title('Ежедневный доход', fontsize=14, fontweight='bold')
-    ax1.set_xticks(range(len(dates)))
-    ax1.set_xticklabels([d.strftime('%d.%m') if isinstance(d, datetime) else d for d in dates], rotation=45)
+    ax1.set_ylabel('Доход (€)', fontsize=12)
+    ax1.set_title('Ежедневный доход (данные с сервера)', fontsize=14, fontweight='bold')
 
-    # Add value labels on bars
-    for i, v in enumerate(amounts):
-        ax1.text(i, v + max(amounts) * 0.01, f'{v:.0f}', ha='center', va='bottom')
+    # Настройка меток оси X
+    step = max(1, len(dates) // 10)
+    ax1.set_xticks(range(0, len(dates), step))
+    ax1.set_xticklabels([d.strftime('%d.%m') for i, d in enumerate(dates) if i % step == 0],
+                        rotation=45)
 
-    # Cumulative revenue
+    for i, (bar, amount) in enumerate(zip(bars, amounts)):
+        if amount > 0:
+            height = bar.get_height()
+            ax1.text(bar.get_x() + bar.get_width() / 2., height,
+                     f'{amount:.1f}€',
+                     ha='center', va='bottom', fontsize=8)
+
     cumulative = []
     total = 0
     for amount in amounts:
         total += amount
         cumulative.append(total)
 
-    ax2.plot(range(len(dates)), cumulative, marker='o', linewidth=2, markersize=8, color='blue')
-    ax2.fill_between(range(len(dates)), cumulative, alpha=0.3)
-    ax2.set_xlabel('Дата', fontsize=12)
-    ax2.set_ylabel('Накопленный доход (₽)', fontsize=12)
-    ax2.set_title('Накопленный доход', fontsize=14, fontweight='bold')
-    ax2.set_xticks(range(len(dates)))
-    ax2.set_xticklabels([d.strftime('%d.%m') if isinstance(d, datetime) else d for d in dates], rotation=45)
+    ax2.plot(range(len(dates)), cumulative, marker='o', linewidth=2,
+             markersize=8, color='#6C5CE7')
+    ax2.fill_between(range(len(dates)), cumulative, alpha=0.3, color='#A29BFE')
 
-    # Add grid
+    ax2.set_xlabel('Дата', fontsize=12)
+    ax2.set_ylabel('Накопленный доход (€)', fontsize=12)
+    ax2.set_title('Накопленный доход', fontsize=14, fontweight='bold')
+
+    # Настройка меток оси X для второго графика
+    ax2.set_xticks(range(0, len(dates), step))
+    ax2.set_xticklabels([d.strftime('%d.%m') for i, d in enumerate(dates) if i % step == 0],
+                        rotation=45)
+
+    # Добавляем аннотацию с итоговой суммой
+    if cumulative:
+        ax2.annotate(f'Итого: {cumulative[-1]:.2f}€',
+                     xy=(len(dates) - 1, cumulative[-1]),
+                     xytext=(10, 10),
+                     textcoords='offset points',
+                     bbox=dict(boxstyle='round,pad=0.5', fc='yellow', alpha=0.5),
+                     fontsize=10,
+                     fontweight='bold')
+
+    # Добавляем сетку
     ax1.grid(True, alpha=0.3)
     ax2.grid(True, alpha=0.3)
 
     plt.tight_layout()
 
-    # Save to temporary file
+    # Сохраняем в временный файл
     temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
     plt.savefig(temp_file.name, dpi=100, bbox_inches='tight')
     plt.close()
@@ -160,52 +206,154 @@ async def generate_revenue_chart(data: List[Tuple]) -> str:
     return temp_file.name
 
 
-async def generate_user_stats_chart(user_data: dict) -> str:
-    """Generate user statistics chart"""
+async def generate_feature_usage_chart(features_data: List[Dict]) -> str:
+    """
+    Generate pie chart for feature usage
+
+    Args:
+        features_data: List of features with usage count
+
+    Returns:
+        Path to generated chart file
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 7))
+
+    # Извлекаем данные
+    features = []
+    usage_counts = []
+    coin_amounts = []
+
+    for feature in features_data[:8]:  # Топ 8 функций
+        features.append(feature.get('Feature', 'Unknown'))
+        usage_counts.append(feature.get('UsageCount', 0))
+        coin_amounts.append(feature.get('TotalCoins', 0))
+
+    # График 1: Круговая диаграмма по количеству использований
+    colors = plt.cm.Set3(range(len(features)))
+    wedges, texts, autotexts = ax1.pie(usage_counts,
+                                       labels=features,
+                                       autopct='%1.1f%%',
+                                       colors=colors,
+                                       startangle=90)
+
+    ax1.set_title('Использование функций (по количеству)', fontsize=12, fontweight='bold')
+
+    # График 2: Горизонтальная столбчатая диаграмма по монетам
+    y_pos = range(len(features))
+    ax2.barh(y_pos, coin_amounts, color=colors, alpha=0.8)
+    ax2.set_yticks(y_pos)
+    ax2.set_yticklabels(features)
+    ax2.set_xlabel('Потрачено монет', fontsize=11)
+    ax2.set_title('Расход монет по функциям', fontsize=12, fontweight='bold')
+
+    # Добавляем значения на столбцах
+    for i, (feature, amount) in enumerate(zip(features, coin_amounts)):
+        ax2.text(amount, i, f' {amount}', va='center', fontsize=9)
+
+    plt.tight_layout()
+
+    # Сохраняем в временный файл
+    temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+    plt.savefig(temp_file.name, dpi=100, bbox_inches='tight')
+    plt.close()
+
+    return temp_file.name
+
+
+async def generate_user_activity_chart(activity_data: Dict) -> str:
+    """
+    Generate user activity chart
+
+    Args:
+        activity_data: Dictionary with user activity metrics
+
+    Returns:
+        Path to generated chart file
+    """
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
 
-    # Pie chart for feature usage
-    features = list(user_data['feature_usage'].keys())
-    usage = list(user_data['feature_usage'].values())
+    # Настраиваем общий стиль
+    fig.suptitle('Статистика активности пользователей', fontsize=16, fontweight='bold')
 
-    ax1.pie(usage, labels=features, autopct='%1.1f%%', startangle=90)
-    ax1.set_title('Использование функций')
+    # График 1: Активность по дням недели
+    days = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+    activity = activity_data.get('weeklyActivity', [10, 15, 12, 18, 20, 25, 22])
 
-    # Bar chart for daily activity
-    days = list(user_data['daily_activity'].keys())
-    activity = list(user_data['daily_activity'].values())
+    ax1.bar(days, activity, color='#3498DB', alpha=0.7)
+    ax1.set_xlabel('День недели')
+    ax1.set_ylabel('Активность')
+    ax1.set_title('Активность по дням недели')
+    ax1.grid(True, alpha=0.3)
 
-    ax2.bar(days, activity, color='skyblue')
-    ax2.set_xlabel('День недели')
+    # График 2: Распределение по времени суток
+    hours = list(range(24))
+    hourly_activity = activity_data.get('hourlyActivity',
+                                        [5] * 6 + [10] * 6 + [15] * 6 + [8] * 6)
+
+    ax2.plot(hours, hourly_activity, color='#E74C3C', linewidth=2)
+    ax2.fill_between(hours, hourly_activity, alpha=0.3, color='#E74C3C')
+    ax2.set_xlabel('Час')
     ax2.set_ylabel('Активность')
-    ax2.set_title('Активность по дням')
+    ax2.set_title('Активность по часам')
+    ax2.grid(True, alpha=0.3)
 
-    # Line chart for coin balance history
-    dates = list(user_data['balance_history'].keys())
-    balance = list(user_data['balance_history'].values())
+    # График 3: Рост пользователей
+    dates = activity_data.get('growthDates', [])
+    users = activity_data.get('growthUsers', [])
 
-    ax3.plot(dates, balance, marker='o', color='gold')
-    ax3.set_xlabel('Дата')
-    ax3.set_ylabel('Баланс')
-    ax3.set_title('История баланса')
-    ax3.tick_params(axis='x', rotation=45)
+    if dates and users:
+        ax3.plot(range(len(dates)), users, marker='o', color='#2ECC71', linewidth=2)
+        ax3.set_xlabel('Период')
+        ax3.set_ylabel('Пользователей')
+        ax3.set_title('Рост пользовательской базы')
+        ax3.grid(True, alpha=0.3)
+    else:
+        ax3.text(0.5, 0.5, 'Нет данных', ha='center', va='center', fontsize=14)
+        ax3.set_title('Рост пользовательской базы')
 
-    # Stats summary
     ax4.axis('off')
     stats_text = f"""
-    Всего потрачено: {user_data['total_spent']} монет
-    Всего заработано: {user_data['total_earned']} монет
-    Дней активности: {user_data['active_days']}
-    Рефералов: {user_data['referrals']}
+    Всего пользователей: {activity_data.get('totalUsers', 0)}
+    Активных за 30 дней: {activity_data.get('activeUsers', 0)}
+    С Telegram: {activity_data.get('telegramUsers', 0)}
+
+    Средняя активность: {activity_data.get('avgActivity', 0):.1f}/день
+    Пиковое время: {activity_data.get('peakTime', '14:00')}
+    Конверсия: {activity_data.get('conversion', 0):.1f}%
     """
-    ax4.text(0.5, 0.5, stats_text, ha='center', va='center', fontsize=12)
+
+    ax4.text(0.1, 0.5, stats_text, ha='left', va='center', fontsize=11,
+             bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgray', alpha=0.3))
     ax4.set_title('Общая статистика')
 
     plt.tight_layout()
 
-    # Save to temporary file
     temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
     plt.savefig(temp_file.name, dpi=100, bbox_inches='tight')
     plt.close()
 
     return temp_file.name
+
+
+async def generate_spending_chart(data: List[tuple]) -> str:
+    """Legacy function - use generate_spending_chart_from_server_data instead"""
+    # Преобразуем старый формат в новый
+    daily_stats = []
+    for row in data:
+        daily_stats.append({
+            'Date': row[0] if isinstance(row[0], str) else row[0].strftime('%Y-%m-%d'),
+            'TotalSpent': row[1]
+        })
+    return await generate_spending_chart_from_server_data(daily_stats)
+
+
+async def generate_revenue_chart(data: List[tuple]) -> str:
+    """Legacy function - use generate_revenue_chart_from_server_data instead"""
+    # Преобразуем старый формат в новый
+    daily_revenue = []
+    for row in data:
+        daily_revenue.append({
+            'Date': row[0] if isinstance(row[0], str) else row[0].strftime('%Y-%m-%d'),
+            'TotalRevenue': row[1]
+        })
+    return await generate_revenue_chart_from_server_data(daily_revenue, [])

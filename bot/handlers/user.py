@@ -254,7 +254,178 @@ async def handle_code_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         return ConversationHandler.END
 
+async def handle_code_input_with_telegram_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle verification code input and link Telegram ID"""
+    code = update.message.text.strip()
+    email = context.user_data.get('linking_email')
 
+    if not email:
+        keyboard = [[InlineKeyboardButton("🔙 В меню", callback_data="start")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            "❌ Ошибка. Начните заново: /start",
+            reply_markup=reply_markup
+        )
+
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    try:
+        # Confirm email
+        result = await api_client.confirm_email(email, code)
+
+        if 'accessToken' in result:
+            user = update.effective_user
+            db_user = await db_manager.get_user(user.id)
+
+            # Связываем Telegram ID с аккаунтом на сервере
+            link_result = await api_client.link_telegram_account(
+                result['accessToken'],
+                user.id,
+                user.username
+            )
+
+            if link_result.get('success'):
+                logger.info(f"✅ Telegram ID {user.id} linked to server account")
+
+            # Сохраняем токен в локальной БД бота
+            async with db_manager.SessionLocal() as session:
+                db_user.email = email
+                db_user.api_token = result['accessToken']
+                db_user.api_user_id = result.get('user', {}).get('id')
+                session.add(db_user)
+                await session.commit()
+
+            # Проверяем последний платеж через Tribute
+            try:
+                payment_status = await api_client.check_tribute_payment(user.id)
+                if payment_status.get('success') and payment_status.get('subscription'):
+                    sub = payment_status['subscription']
+                    if sub.get('isActive'):
+                        await update.message.reply_text(
+                            f"💳 Обнаружена активная подписка!\n"
+                            f"Тип: {sub.get('type')}\n"
+                            f"Действует до: {sub.get('expiresAt', 'н/д')[:10] if sub.get('expiresAt') else 'н/д'}"
+                        )
+            except Exception as e:
+                logger.info(f"No active Tribute subscription found: {e}")
+
+            keyboard = [[InlineKeyboardButton("🏠 В меню", callback_data="start")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            # Получаем баланс
+            try:
+                balance = await api_client.get_balance(result['accessToken'])
+                balance_text = f"\n💰 Ваш баланс: {balance.get('balance', 0)} монет"
+
+                if balance.get('hasActiveSubscription'):
+                    expiry = balance.get('subscriptionExpiresAt', '')
+                    if expiry and len(expiry) >= 10:
+                        balance_text += f"\n📅 Подписка активна до: {expiry[:10]}"
+            except:
+                balance_text = ""
+
+            await update.message.reply_text(
+                f"✅ Аккаунт успешно связан!{balance_text}\n\n"
+                "Теперь вы можете:\n"
+                "• Покупать подписки через Tribute\n"
+                "• Отслеживать баланс монет\n"
+                "• Видеть статистику использования",
+                reply_markup=reply_markup
+            )
+
+            context.user_data.clear()
+
+            logger.info(f"User {user.id} successfully linked account with Telegram ID on server")
+
+            return ConversationHandler.END
+        else:
+            keyboard = [[InlineKeyboardButton("🔙 Отменить", callback_data="cancel_linking")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await update.message.reply_text(
+                "❌ Неверный код. Попробуйте снова:",
+                reply_markup=reply_markup
+            )
+            return USER_AWAITING_CODE
+
+    except Exception as e:
+        logger.error(f"Error confirming code: {e}")
+
+        keyboard = [[InlineKeyboardButton("🔙 В меню", callback_data="start")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            "❌ Ошибка подтверждения. Попробуйте позже.",
+            reply_markup=reply_markup
+        )
+
+        context.user_data.clear()
+        return ConversationHandler.END
+
+async def check_subscription_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Check Tribute subscription status"""
+    query = update.callback_query
+    await query.answer()
+
+    user = query.from_user
+    db_user = await db_manager.get_user(user.id)
+
+    if not db_user or not db_user.api_token:
+        keyboard = [[InlineKeyboardButton("🔗 Связать аккаунт", callback_data="link_account")]]
+        await query.message.edit_text(
+            "❌ Сначала свяжите аккаунт с приложением",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    try:
+        # Проверяем статус платежа на сервере
+        payment_status = await api_client.check_tribute_payment(user.id)
+
+        if payment_status.get('success') and payment_status.get('subscription'):
+            sub = payment_status['subscription']
+
+            status_text = f"""💳 **Статус подписки Tribute**
+
+📦 Тип: {sub.get('type', 'н/д')}
+💵 Стоимость: {sub.get('price', 0):.2f} €
+📅 Куплена: {sub.get('purchasedAt', 'н/д')[:10] if sub.get('purchasedAt') else 'н/д'}
+⏰ Истекает: {sub.get('expiresAt', 'н/д')[:10] if sub.get('expiresAt') else 'н/д'}
+✅ Статус: {'Активна' if sub.get('isActive') else 'Неактивна'}"""
+
+            balance = await api_client.get_balance(db_user.api_token)
+            if balance:
+                status_text += f"\n\n💰 Текущий баланс: {balance.get('balance', 0)} монет"
+
+                if balance.get('hasActiveSubscription'):
+                    status_text += f"\n📊 Подписочных монет: {balance.get('subscriptionCoinsRemaining', 0)}"
+
+        else:
+            status_text = """💳 **Статус подписки**
+
+❌ Активная подписка не найдена
+
+Купите подписку через Tribute для получения монет."""
+
+        keyboard = [
+            [InlineKeyboardButton("💳 Купить подписку", callback_data="subscriptions")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="start")]
+        ]
+
+        await query.message.edit_text(
+            status_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+
+    except Exception as e:
+        logger.error(f"Error checking subscription status: {e}")
+        await query.message.edit_text(
+            "❌ Ошибка проверки статуса. Попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="start")]])
+        )
 async def cancel_linking(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel account linking"""
     query = update.callback_query
@@ -282,7 +453,6 @@ async def cancel_linking(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data.clear()
     return ConversationHandler.END
-
 
 async def show_restore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show restore purchases"""

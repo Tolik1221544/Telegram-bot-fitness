@@ -128,6 +128,11 @@ class APIClient:
             '/api/stats/user',
             headers={'Authorization': f'Bearer {token}'}
         )
-
+async def check_payment_status(self, order_id: str) -> Dict:
+    """Check payment status"""
+    return await self._request(
+        'GET',
+        f'/api/payment/check/{order_id}'
+    )
 
 api_client = APIClient()

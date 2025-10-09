@@ -8,6 +8,8 @@ from bot.database import db_manager
 from bot.handlers import start, admin, payment, user
 import sys
 
+from bot.tasks.payment_checker import TributePaymentChecker
+
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -20,6 +22,18 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+async def start_payment_checker(application):
+
+    bot = application.bot
+    checker = TributePaymentChecker(bot)
+
+    # Запускаем в фоновом режиме
+    asyncio.create_task(checker.start())
+
+    # Сохраняем ссылку для остановки при завершении
+    application.bot_data['payment_checker'] = checker
+
+    logger.info("💳 Payment checker started successfully")
 
 async def post_init(application: Application):
     """Initialize bot after startup"""
@@ -37,7 +51,10 @@ async def post_init(application: Application):
     logger.info("Bot commands set")
 
     logger.info("✅ Bot initialized successfully - NO product initialization needed")
+    from bot.tasks.payment_checker import start_payment_checker
+    await start_payment_checker(application)
 
+    logger.info("✅ Bot initialized successfully with payment checker")
 
 def main():
     """Start the bot"""
