@@ -19,31 +19,6 @@ ADMIN_SET_USER_AMOUNT = 102
 ADMIN_CREATE_REFERRAL = 103
 
 
-async def init_tribute_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Инициализация продуктов Tribute (для админов)"""
-    user = update.effective_user
-
-    if user.id not in config.ADMIN_IDS:
-        await update.message.reply_text("❌ У вас нет прав администратора")
-        return
-
-    from bot.handlers.payment import tribute
-
-    await update.message.reply_text("🔄 Инициализация продуктов Tribute...")
-
-    try:
-        await tribute.init_products()
-
-        text = "✅ Продукты успешно инициализированы!\n\n"
-        text += "📦 ID продуктов:\n"
-        for key, product_id in tribute.product_ids.items():
-            text += f"  • {key}: {product_id}\n"
-
-        await update.message.reply_text(text)
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка инициализации: {e}")
-        logger.exception("Init products error:")
-
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin panel command"""
     user = update.effective_user
@@ -60,7 +35,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔗 Создать реф. ссылку", callback_data="admin_create_referral")],
         [InlineKeyboardButton("📋 Список реф. ссылок", callback_data="admin_list_referrals")],
         [InlineKeyboardButton("👥 Статистика пользователей", callback_data="admin_user_stats")],
-        [InlineKeyboardButton("🛍️ Инициализировать Tribute", callback_data="admin_init_tribute")],  # НОВАЯ КНОПКА
+        [InlineKeyboardButton("💳 Незавершенные платежи", callback_data="admin_pending_payments")],
         [InlineKeyboardButton("🔙 Назад", callback_data="start")]
     ]
 
@@ -102,8 +77,8 @@ async def get_admin_stats():
         return f"""📊 Статистика:
 👥 Всего пользователей: {total_users}
 🟢 Активных \\(7 дней\\): {active_users}
-💰 Общий доход: {total_revenue:.2f} ₽
-📅 Доход сегодня: {today_revenue:.2f} ₽"""
+💰 Общий доход: {total_revenue:.2f} €
+📅 Доход сегодня: {today_revenue:.2f} €"""
 
 
 async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -116,26 +91,6 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return ConversationHandler.END
 
     await query.answer()
-
-    if query.data == "admin_init_tribute":
-        from bot.handlers.payment import tribute
-
-        await query.message.reply_text("🔄 Инициализация продуктов Tribute...")
-
-        try:
-            await tribute.init_products()
-
-            text = "✅ Продукты успешно инициализированы!\n\n"
-            text += "📦 ID продуктов:\n"
-            for key, product_id in tribute.product_ids.items():
-                text += f"  • {key}: {product_id or 'не создан'}\n"
-
-            await query.message.reply_text(text)
-        except Exception as e:
-            await query.message.reply_text(f"❌ Ошибка инициализации: {e}")
-            logger.exception("Init products error:")
-
-        return ConversationHandler.END
 
     if query.data == "admin_set_reg_coins":
         await query.message.reply_text(
@@ -173,7 +128,41 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await show_user_stats(query.message)
         return ConversationHandler.END
 
+    elif query.data == "admin_pending_payments":
+        await show_pending_payments(query.message)
+        return ConversationHandler.END
+
     return ConversationHandler.END
+
+
+async def show_pending_payments(message):
+    """Показать незавершенные платежи"""
+    async with db_manager.SessionLocal() as session:
+        result = await session.execute(
+            select(Payment)
+            .where(Payment.status == 'pending')
+            .order_by(Payment.created_at.desc())
+            .limit(10)
+        )
+        payments = result.scalars().all()
+
+    if not payments:
+        await message.reply_text("✅ Нет незавершенных платежей")
+        return
+
+    text = "💳 **Незавершенные платежи:**\n\n"
+
+    for payment in payments:
+        text += f"ID: `{payment.payment_id[:8]}...`\n"
+        text += f"User: {payment.telegram_id}\n"
+        text += f"Сумма: {payment.amount} {payment.currency}\n"
+        text += f"Монет: {payment.coins}\n"
+        text += f"Дата: {payment.created_at.strftime('%d.%m %H:%M')}\n"
+        text += f"---\n"
+
+    text += "\nИспользуйте:\n`/confirm_payment <telegram_id> <coins>`"
+
+    await message.reply_text(text, parse_mode='Markdown')
 
 
 async def set_registration_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -236,6 +225,26 @@ async def set_user_coins_amount(update: Update, context: ContextTypes.DEFAULT_TY
 
             # Set balance
             await api_client.set_balance(token, coins, 'admin')
+
+            # Записываем в статистику трат
+            async with db_manager.SessionLocal() as session:
+                # Находим пользователя по email
+                result = await session.execute(
+                    select(User).where(User.email == email)
+                )
+                user = result.scalar_one_or_none()
+
+                if user:
+                    spending = CoinSpending(
+                        telegram_id=user.telegram_id,
+                        api_user_id=user.api_user_id,
+                        amount=coins,
+                        feature='admin_credit',
+                        description='Начисление от администратора',
+                        date=datetime.utcnow().strftime('%Y-%m-%d')
+                    )
+                    session.add(spending)
+                    await session.commit()
 
             await update.message.reply_text(
                 f"✅ Установлено {coins} монет для {email}"
@@ -300,6 +309,7 @@ async def send_spending_chart(message):
         async with db_manager.SessionLocal() as session:
             start_date = datetime.utcnow() - timedelta(days=30)
 
+            # Получаем данные о тратах
             result = await session.execute(
                 select(
                     CoinSpending.date,
@@ -313,8 +323,20 @@ async def send_spending_chart(message):
             data = result.all()
 
         if not data:
-            await message.reply_text("📊 Нет данных о тратах за последние 30 дней")
-            return
+            # Генерируем тестовые данные для демонстрации
+            from datetime import date
+            today = date.today()
+            data = []
+            for i in range(30):
+                day = today - timedelta(days=29 - i)
+                # Случайные траты от 50 до 500 монет
+                import random
+                amount = random.randint(50, 500)
+                data.append((day.strftime('%Y-%m-%d'), amount))
+
+            await message.reply_text(
+                "📊 Нет реальных данных о тратах. Показываю демо-график..."
+            )
 
         # Generate chart
         chart_path = await generate_spending_chart(data)
@@ -353,8 +375,19 @@ async def send_revenue_chart(message):
             data = result.all()
 
         if not data:
-            await message.reply_text("📈 Нет данных о доходах за последние 30 дней")
-            return
+            # Генерируем демо-данные
+            from datetime import date
+            today = date.today()
+            data = []
+            for i in range(30):
+                day = today - timedelta(days=29 - i)
+                import random
+                amount = random.randint(0, 100)
+                data.append((day, amount))
+
+            await message.reply_text(
+                "📈 Нет реальных данных о доходах. Показываю демо-график..."
+            )
 
         # Generate chart
         chart_path = await generate_revenue_chart(data)
@@ -396,7 +429,7 @@ async def show_referral_links(message):
         text += f"👁 Переходов: {link.clicks}\n"
         text += f"👤 Регистраций: {link.registrations}\n"
         text += f"💰 Покупок: {link.purchases}\n"
-        text += f"💵 Доход: {link.total_revenue:.2f} ₽\n\n"
+        text += f"💵 Доход: {link.total_revenue:.2f} €\n\n"
 
     await message.reply_text(text, parse_mode='Markdown')
 
@@ -458,7 +491,7 @@ async def admin_callback_button(update: Update, context: ContextTypes.DEFAULT_TY
         [InlineKeyboardButton("🔗 Создать реф. ссылку", callback_data="admin_create_referral")],
         [InlineKeyboardButton("📋 Список реф. ссылок", callback_data="admin_list_referrals")],
         [InlineKeyboardButton("👥 Статистика пользователей", callback_data="admin_user_stats")],
-        [InlineKeyboardButton("🛍️ Инициализировать Tribute", callback_data="admin_init_tribute")],
+        [InlineKeyboardButton("💳 Незавершенные платежи", callback_data="admin_pending_payments")],
         [InlineKeyboardButton("🔙 Назад", callback_data="start")]
     ]
 
@@ -471,10 +504,10 @@ async def admin_callback_button(update: Update, context: ContextTypes.DEFAULT_TY
         parse_mode='Markdown'
     )
 
+
 def register_admin_handlers(application):
     """Register admin handlers"""
     application.add_handler(CommandHandler("admin", admin_command))
-
     application.add_handler(CallbackQueryHandler(admin_callback_button, pattern="^admin$"))
 
     admin_conv = ConversationHandler(
@@ -496,4 +529,49 @@ def register_admin_handlers(application):
         fallbacks=[CommandHandler("cancel", cancel_admin_action)]
     )
 
-    application.add_handler(admin_conv)
+    application.add_handler(admin_conv)now() - timedelta(days=30)
+
+            result = await session.execute(
+                select(
+                    func.date(Payment.completed_at).label('date'),
+                    func.sum(Payment.amount).label('total')
+                )
+                .where(Payment.status == 'completed')
+                .where(Payment.completed_at >= start_date)
+                .group_by(func.date(Payment.completed_at))
+                .order_by(func.date(Payment.completed_at))
+            )
+
+            data = result.all()
+
+        if not data:
+            # Генерируем демо-данные
+            from datetime import date
+
+            today = date.today()
+            data = []
+            for i in range(30):
+                day = today - timedelta(days=29 - i)
+                import random
+
+                amount = random.randint(0, 100)
+                data.append((day, amount))
+
+            await message.reply_text(
+                "📈 Нет реальных данных о доходах. Показываю демо-график..."
+            )
+
+            # Generate chart
+        chart_path = await generate_revenue_chart(data)
+
+        with open(chart_path, 'rb') as photo:
+            await message.reply_photo(
+                photo=photo,
+                caption="📈 График доходов за 30 дней"
+            )
+
+        os.remove(chart_path)
+
+    except Exception as e:
+        logger.error(f"Error generating revenue chart: {e}")
+        await message.reply_text("❌ Ошибка генерации графика")
