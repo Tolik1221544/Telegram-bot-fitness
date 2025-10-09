@@ -14,16 +14,17 @@ class TributePayment:
     """Tribute.tg payment integration"""
 
     def __init__(self):
-        self.bot_username = "tribute"
-        self.start_param = "sDlI"  # Параметр из ссылки заказчика
+        self.shop_url = "https://t.me/tribute/app?startapp=sDlI"
 
     def get_payment_link(self, user_id: int, package_id: str) -> str:
-        """Создать ссылку на оплату с telegram_id и package_id"""
-        # Передаем telegram_id в metadata через URL параметр
-        return f"https://t.me/{self.bot_username}/app?startapp={self.start_param}_tid{user_id}_pkg{package_id}"
+        """
+        Получить ссылку на магазин Tribute
 
+        ВАЖНО: Используем базовую ссылку без изменений,
+        так как Tribute не поддерживает передачу metadata через URL
+        """
+        return self.shop_url
 
-# Пакеты подписок (как на скрине заказчика)
 SUBSCRIPTION_PACKAGES = [
     {
         'id': 'year',
@@ -65,7 +66,6 @@ SUBSCRIPTION_PACKAGES = [
 
 tribute = TributePayment()
 
-
 async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show available subscription packages"""
     query = update.callback_query
@@ -100,7 +100,6 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
     user = query.from_user
     callback_data = query.data
 
-    # Определяем пакет
     if callback_data.startswith("buy_package_"):
         package_id = callback_data.replace("buy_package_", "")
         package = next((p for p in SUBSCRIPTION_PACKAGES if p['id'] == package_id), None)
@@ -114,7 +113,6 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
 
     await query.answer()
 
-    # Получаем пользователя
     db_user = await db_manager.get_user(user.id)
     if not db_user:
         await query.message.reply_text("❌ Используйте /start")
@@ -128,10 +126,8 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
         )
         return
 
-    # Создаем order_id для логирования
     order_id = str(uuid.uuid4())
 
-    # Сохраняем в БД бота (для истории)
     async with db_manager.SessionLocal() as session:
         payment = Payment(
             user_id=db_user.id,
@@ -147,15 +143,28 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
         session.add(payment)
         await session.commit()
 
-    # Получаем ссылку на оплату с telegram_id и package_id
     payment_url = tribute.get_payment_link(user.id, package['id'])
 
-    logger.info(f"💳 User {user.id} started payment for {package['name']}")
-    logger.info(f"💳 Payment URL: {payment_url}")
+    logger.info(f"💳 User {user.id} (@{user.username or 'no_username'}) started payment")
+    logger.info(f"📦 Package: {package['name']} - {package['price']} {package['currency']}")
+    logger.info(f"🔗 Payment URL: {payment_url}")
+    logger.info(f"👤 User info: {user.first_name} (ID: {user.id}, Email: {db_user.email})")
 
-    # Показываем пользователю
     keyboard = [
-        [InlineKeyboardButton("💳 Оплатить подписку", url=payment_url)],
+        [InlineKeyboardButton(
+            "💳 Открыть магазин Tribute",
+            url=payment_url  # Обычный url для telegram-ссылок
+        )],
+        [InlineKeyboardButton("❌ Отменить", callback_data="subscriptions")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    keyboard = [
+        [InlineKeyboardButton(
+            "💳 Открыть магазин Tribute",
+            url=payment_url
+        )],
         [InlineKeyboardButton("❌ Отменить", callback_data="subscriptions")]
     ]
 
@@ -163,17 +172,22 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
 
     text = f"""💳 **Оплата через Tribute**
 
-📦 Пакет: {package['name']}
+📦 Пакет: **{package['name']}**
 💰 Монет: {package['coins']}
 📅 Период: {package['days']} дней
-💵 К оплате: {package['price']} {package['currency']}
+💵 К оплате: **{package['price']} {package['currency']}**
 
-**Как оплатить:**
-1️⃣ Нажмите "💳 Оплатить подписку"
-2️⃣ Выберите период: **{package['name']}** (важно!)
-3️⃣ Оплатите удобным способом
+**Инструкция:**
 
-💡 **Монеты зачислятся автоматически** в течение 1-2 минут после оплаты!"""
+1️⃣ Нажмите кнопку "💳 Открыть магазин Tribute"
+2️⃣ Выберите период: **{package['name']}** ({package['price']} {package['currency']})
+3️⃣ Выберите способ оплаты
+4️⃣ Подтвердите платёж
+
+⚡️ Монеты зачислятся автоматически после оплаты!
+
+💡 После оплаты проверьте баланс: /balance
+"""
 
     await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 

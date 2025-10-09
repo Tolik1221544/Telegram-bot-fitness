@@ -252,45 +252,68 @@ async def send_spending_chart(message):
     """Send coin spending chart"""
     try:
         async with db_manager.SessionLocal() as session:
-            # Получаем транзакции за последние 30 дней
-            start_date = datetime.utcnow() - timedelta(days=30)
-
-            # Импортируем здесь, чтобы избежать циклических импортов
+            # ИСПРАВЛЕНИЕ: Используем правильную таблицу и проверяем наличие данных
             from bot.database import LwCoinTransaction
 
+            start_date = datetime.utcnow() - timedelta(days=30)
+
+            # Сначала проверим, есть ли вообще данные
+            count_result = await session.execute(
+                select(func.count(LwCoinTransaction.id))
+                .where(LwCoinTransaction.created_at >= start_date)
+                .where(LwCoinTransaction.amount < 0)
+            )
+            total_records = count_result.scalar()
+
+            logger.info(f"📊 Found {total_records} spending records in last 30 days")
+
+            if total_records == 0:
+                # Создаём тестовые данные для демонстрации
+                await message.reply_text(
+                    "📊 **Нет данных о тратах за последние 30 дней**\n\n"
+                )
+                return
+
+            # Получаем данные по дням
             result = await session.execute(
                 select(
                     func.date(LwCoinTransaction.created_at).label('date'),
-                    func.sum(LwCoinTransaction.amount).label('total')
+                    func.sum(func.abs(LwCoinTransaction.amount)).label('total')
                 )
                 .where(LwCoinTransaction.created_at >= start_date)
-                .where(LwCoinTransaction.amount < 0)  # Только траты
+                .where(LwCoinTransaction.amount < 0)
                 .group_by(func.date(LwCoinTransaction.created_at))
                 .order_by(func.date(LwCoinTransaction.created_at))
             )
 
             data = result.all()
 
-        if not data:
-            await message.reply_text("📊 Нет данных о тратах за последние 30 дней")
-            return
+            if not data:
+                await message.reply_text("📊 Нет данных о тратах за последние 30 дней")
+                return
 
-        # Generate chart
-        chart_path = await generate_spending_chart(data)
+            # Generate chart
+            chart_path = await generate_spending_chart(data)
 
-        with open(chart_path, 'rb') as photo:
-            await message.reply_photo(
-                photo=photo,
-                caption="📊 График трат монет за 30 дней"
-            )
+            with open(chart_path, 'rb') as photo:
+                await message.reply_photo(
+                    photo=photo,
+                    caption=f"📊 График трат монет за 30 дней\n\n"
+                            f"📉 Всего записей: {total_records}\n"
+                            f"📅 Дней с активностью: {len(data)}"
+                )
 
-        # Cleanup
-        os.remove(chart_path)
+            # Cleanup
+            os.remove(chart_path)
 
     except Exception as e:
         logger.error(f"Error generating spending chart: {e}")
         logger.exception("Full traceback:")
-        await message.reply_text("❌ Ошибка генерации графика")
+        await message.reply_text(
+            f"❌ Ошибка генерации графика\n\n"
+            f"Детали: {str(e)}\n\n"
+            f"Проверьте логи для подробностей."
+        )
 
 
 async def send_revenue_chart(message):
@@ -298,6 +321,27 @@ async def send_revenue_chart(message):
     try:
         async with db_manager.SessionLocal() as session:
             start_date = datetime.utcnow() - timedelta(days=30)
+
+            # ИСПРАВЛЕНИЕ: Проверяем наличие данных
+            count_result = await session.execute(
+                select(func.count(Payment.id))
+                .where(Payment.status == 'completed')
+                .where(Payment.completed_at >= start_date)
+            )
+            total_records = count_result.scalar()
+
+            logger.info(f"📈 Found {total_records} completed payments in last 30 days")
+
+            if total_records == 0:
+                await message.reply_text(
+                    "📈 **Нет данных о доходах за последние 30 дней**\n\n"
+                    "Данные появятся после первых успешных платежей через Tribute.\n\n"
+                    "💡 Убедитесь, что:\n"
+                    "• Webhook настроен в Tribute\n"
+                    "• Платежи имеют статус 'completed'\n"
+                    "• Поле completed_at заполняется"
+                )
+                return
 
             result = await session.execute(
                 select(
@@ -312,25 +356,33 @@ async def send_revenue_chart(message):
 
             data = result.all()
 
-        if not data:
-            await message.reply_text("📈 Нет данных о доходах за последние 30 дней")
-            return
+            if not data:
+                await message.reply_text("📈 Нет данных о доходах за последние 30 дней")
+                return
 
-        # Generate chart
-        chart_path = await generate_revenue_chart(data)
+            # Generate chart
+            chart_path = await generate_revenue_chart(data)
 
-        with open(chart_path, 'rb') as photo:
-            await message.reply_photo(
-                photo=photo,
-                caption="📈 График доходов за 30 дней"
-            )
+            with open(chart_path, 'rb') as photo:
+                total_revenue = sum(row[1] for row in data)
+                await message.reply_photo(
+                    photo=photo,
+                    caption=f"📈 График доходов за 30 дней\n\n"
+                            f"💰 Всего платежей: {total_records}\n"
+                            f"💵 Общий доход: {total_revenue:.2f} €\n"
+                            f"📅 Дней с платежами: {len(data)}"
+                )
 
-        os.remove(chart_path)
+            os.remove(chart_path)
 
     except Exception as e:
         logger.error(f"Error generating revenue chart: {e}")
         logger.exception("Full traceback:")
-        await message.reply_text("❌ Ошибка генерации графика")
+        await message.reply_text(
+            f"❌ Ошибка генерации графика\n\n"
+            f"Детали: {str(e)}\n\n"
+            f"Проверьте логи для подробностей."
+        )
 
 
 async def show_referral_links(message):
