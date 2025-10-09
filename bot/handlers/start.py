@@ -1,6 +1,6 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
-from bot.database import db_manager, User, CoinSpending
+from bot.database import db_manager, User
 from bot.api_client import api_client
 from bot.config import config
 from bot.utils.tracking import track_referral
@@ -202,14 +202,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def track_coin_usage(telegram_id: int, amount: int, feature: str, description: str = None):
     """Записать использование монет для статистики"""
     try:
+        from bot.database import LwCoinTransaction
         async with db_manager.SessionLocal() as session:
             db_user = await db_manager.get_user(telegram_id)
 
-            spending = CoinSpending(
+            spending = LwCoinTransaction(
                 telegram_id=telegram_id,
                 api_user_id=db_user.api_user_id if db_user else None,
                 amount=amount,
-                feature=feature,
+                type='spent',
+                feature_used=feature,
                 description=description,
                 date=datetime.utcnow().strftime('%Y-%m-%d')
             )

@@ -2,17 +2,48 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import datetime, timedelta
 import seaborn as sns
-import io
-import os
 import tempfile
 from typing import List, Tuple
+from sqlalchemy import select, func
+from bot.database import LwCoinTransaction, Payment
 
 plt.style.use('seaborn-v0_8-darkgrid')
 sns.set_palette("husl")
 
 
+async def generate_spending_chart_from_db(db_session, days: int = 30) -> str:
+    """
+    Generate coin spending chart from database
+
+    Args:
+        db_session: Database session
+        days: Number of days to show (default: 30)
+
+    Returns:
+        Path to generated chart file
+    """
+    start_date = datetime.utcnow() - timedelta(days=days)
+
+    result = await db_session.execute(
+        select(
+            CoinSpending.date,
+            func.sum(CoinSpending.amount).label('total')
+        )
+        .where(CoinSpending.timestamp >= start_date)
+        .group_by(CoinSpending.date)
+        .order_by(CoinSpending.date)
+    )
+
+    data = result.all()
+
+    if not data:
+        raise ValueError(f"No spending data for last {days} days")
+
+    return await generate_spending_chart(data)
+
+
 async def generate_spending_chart(data: List[Tuple]) -> str:
-    """Generate coin spending chart"""
+    """Generate coin spending chart from data"""
     fig, ax = plt.subplots(figsize=(12, 6))
 
     dates = [datetime.strptime(row[0], '%Y-%m-%d') for row in data]
@@ -49,8 +80,40 @@ async def generate_spending_chart(data: List[Tuple]) -> str:
     return temp_file.name
 
 
+async def generate_revenue_chart_from_db(db_session, days: int = 30) -> str:
+    """
+    Generate revenue chart from database
+
+    Args:
+        db_session: Database session
+        days: Number of days to show (default: 30)
+
+    Returns:
+        Path to generated chart file
+    """
+    start_date = datetime.utcnow() - timedelta(days=days)
+
+    result = await db_session.execute(
+        select(
+            func.date(Payment.completed_at).label('date'),
+            func.sum(Payment.amount).label('total')
+        )
+        .where(Payment.status == 'completed')
+        .where(Payment.completed_at >= start_date)
+        .group_by(func.date(Payment.completed_at))
+        .order_by(func.date(Payment.completed_at))
+    )
+
+    data = result.all()
+
+    if not data:
+        raise ValueError(f"No revenue data for last {days} days")
+
+    return await generate_revenue_chart(data)
+
+
 async def generate_revenue_chart(data: List[Tuple]) -> str:
-    """Generate revenue chart"""
+    """Generate revenue chart from data"""
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
 
     dates = [row[0] for row in data]
