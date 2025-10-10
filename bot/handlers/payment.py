@@ -8,7 +8,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Пакеты подписок
 SUBSCRIPTION_PACKAGES = [
     {
         'id': '1month',
@@ -94,7 +93,6 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
 
     await query.answer()
 
-    # Проверяем связан ли аккаунт
     from bot.database import db_manager
     db_user = await db_manager.get_user(user.id)
 
@@ -110,7 +108,6 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
         )
         return
 
-    # Генерируем уникальный order_id
     order_id = f"tg_{user.id}_{uuid.uuid4().hex[:8]}"
 
     logger.info(f"💳 User {user.id} starting payment for {package['name']}")
@@ -118,7 +115,6 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
         f"📦 Package: {package['coins']} coins, {package['days']} days, {package['price']} {package['currency']}")
     logger.info(f"🔗 Order ID: {order_id}")
 
-    # Создаём pending payment на бэкенде
     try:
         pending_result = await api_client._request(
             'POST',
@@ -146,7 +142,6 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
         await query.message.edit_text("❌ Ошибка создания платежа. Попробуйте позже.")
         return
 
-    # Ссылка на магазин Tribute (базовая без параметров)
     payment_url = "https://t.me/tribute/app?startapp=sDlI"
 
     keyboard = [
@@ -173,7 +168,6 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
 
 ⚡️ Монеты зачислятся **автоматически** в течение 2 минут после оплаты!
 
-💡 Бэкенд проверяет статус каждые 2 минуты.
 """
 
     await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='Markdown')

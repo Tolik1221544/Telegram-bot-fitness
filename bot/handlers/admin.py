@@ -91,6 +91,9 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     await query.answer()
 
+    # Логируем для отладки
+    logger.info(f"Admin callback: {query.data} from user {user.id}")
+
     if query.data == "admin_set_reg_coins":
         await query.message.reply_text(
             f"💰 Введите новое количество монет при регистрации\n"
@@ -105,10 +108,12 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return ADMIN_SET_USER_EMAIL
 
     elif query.data == "admin_spending_chart":
+        # Передаем правильный message объект
         await send_spending_chart(query.message)
         return ConversationHandler.END
 
     elif query.data == "admin_revenue_chart":
+        # Передаем правильный message объект
         await send_revenue_chart(query.message)
         return ConversationHandler.END
 
@@ -251,36 +256,79 @@ async def create_referral_link(update: Update, context: ContextTypes.DEFAULT_TYP
 async def send_spending_chart(message):
     """Отправить график трат монет (данные с бэкенда)"""
     try:
-        # Получаем данные с бэкенда вместо локальной БД
         from bot.api_client import api_client
 
-        # Нужен токен админа
-        admin_user = await db_manager.get_user(
-            message.from_user.id if hasattr(message, 'from_user') else message.chat.id)
+        if hasattr(message, 'from_user'):
+            user_id = message.from_user.id
+        elif hasattr(message, 'chat'):
+            user_id = message.chat.id
+        else:
+            user_id = message.chat.id
 
-        if not admin_user or not admin_user.api_token:
-            await message.reply_text("❌ Админ должен быть привязан к аккаунту")
+        logger.info(f"📊 Getting spending chart for admin user_id: {user_id}")
+
+        # Получаем админа из БД
+        admin_user = await db_manager.get_user(user_id)
+
+        if not admin_user:
+            logger.error(f"❌ Admin user {user_id} not found in DB")
+            await message.reply_text("❌ Админ не найден в БД. Используйте /start")
             return
 
-        # Запрос к бэкенду за статистикой трат
-        stats_response = await api_client._request(
-            'GET',
-            '/api/stats/coin-spending-daily?days=30',
-            headers={'Authorization': f'Bearer {admin_user.api_token}'}
-        )
+        if not admin_user.api_token:
+            logger.error(f"❌ Admin user {user_id} has no API token")
+            await message.reply_text(
+                "❌ Аккаунт не привязан.\n"
+                "Используйте кнопку '🔗 Связать аккаунт' в главном меню"
+            )
+            return
 
-        if not stats_response or not stats_response.get('data'):
+        logger.info(f"✅ Found admin with token, requesting data from server...")
+
+        try:
+            stats_response = await api_client._request(
+                'GET',
+                '/api/stats/coin-spending-daily?days=30',
+                headers={'Authorization': f'Bearer {admin_user.api_token}'}
+            )
+        except Exception as api_error:
+            logger.error(f"API request failed: {api_error}")
+            await message.reply_text(f"❌ Ошибка API: {str(api_error)}")
+            return
+
+        if not stats_response:
+            logger.warning("Empty response from API")
+            await message.reply_text("📊 API вернул пустой ответ")
+            return
+
+        if 'data' in stats_response:
+            daily_stats = stats_response['data']
+        elif 'success' in stats_response and stats_response.get('data'):
+            daily_stats = stats_response['data']
+        elif isinstance(stats_response, list):
+            daily_stats = stats_response
+        else:
+            logger.error(f"Unexpected API response structure: {stats_response}")
+            await message.reply_text("❌ Неожиданный формат ответа от API")
+            return
+
+        if not daily_stats:
             await message.reply_text("📊 Нет данных о тратах за последние 30 дней")
             return
 
-        daily_stats = stats_response['data']
+        logger.info(f"📊 Got {len(daily_stats)} days of data from server")
 
         # Генерируем график
         from bot.utils.charts import generate_spending_chart_from_server_data
         chart_path = await generate_spending_chart_from_server_data(daily_stats)
 
         with open(chart_path, 'rb') as photo:
-            total_spent = sum(stat.get('totalSpent', 0) for stat in daily_stats)
+            # Считаем общую сумму трат
+            total_spent = sum(
+                stat.get('TotalSpent', stat.get('totalSpent', 0))
+                for stat in daily_stats
+            )
+
             await message.reply_photo(
                 photo=photo,
                 caption=f"📊 График трат монет за 30 дней (данные с сервера)\n\n"
@@ -289,6 +337,7 @@ async def send_spending_chart(message):
             )
 
         os.remove(chart_path)
+        logger.info("✅ Spending chart sent successfully")
 
     except Exception as e:
         logger.error(f"Error generating spending chart: {e}")
@@ -299,31 +348,79 @@ async def send_spending_chart(message):
 async def send_revenue_chart(message):
     """Отправить график доходов (данные с бэкенда)"""
     try:
-        admin_user = await db_manager.get_user(
-            message.from_user.id if hasattr(message, 'from_user') else message.chat.id)
+        from bot.api_client import api_client
 
-        if not admin_user or not admin_user.api_token:
-            await message.reply_text("❌ Админ должен быть привязан к аккаунту")
+        # Правильно получаем user_id
+        if hasattr(message, 'from_user'):
+            user_id = message.from_user.id
+        elif hasattr(message, 'chat'):
+            user_id = message.chat.id
+        else:
+            user_id = message.chat.id
+
+        logger.info(f"📈 Getting revenue chart for admin user_id: {user_id}")
+
+        admin_user = await db_manager.get_user(user_id)
+
+        if not admin_user:
+            logger.error(f"❌ Admin user {user_id} not found in DB")
+            await message.reply_text("❌ Админ не найден в БД. Используйте /start")
             return
 
-        # Запрос к бэкенду
-        revenue_response = await api_client._request(
-            'GET',
-            '/api/stats/revenue-daily?days=30',
-            headers={'Authorization': f'Bearer {admin_user.api_token}'}
-        )
+        if not admin_user.api_token:
+            logger.error(f"❌ Admin user {user_id} has no API token")
+            await message.reply_text(
+                "❌ Аккаунт не привязан.\n"
+                "Используйте кнопку '🔗 Связать аккаунт' в главном меню"
+            )
+            return
 
-        if not revenue_response or not revenue_response.get('data'):
+        logger.info(f"✅ Found admin with token, requesting revenue data...")
+
+        # Запрос к бэкенду
+        try:
+            revenue_response = await api_client._request(
+                'GET',
+                '/api/stats/revenue-daily?days=30',
+                headers={'Authorization': f'Bearer {admin_user.api_token}'}
+            )
+        except Exception as api_error:
+            logger.error(f"API request failed: {api_error}")
+            await message.reply_text(f"❌ Ошибка API: {str(api_error)}")
+            return
+
+        if not revenue_response:
+            logger.warning("Empty response from API")
+            await message.reply_text("📈 API вернул пустой ответ")
+            return
+
+        # Проверяем структуру ответа
+        if 'data' in revenue_response:
+            daily_revenue = revenue_response['data']
+        elif 'success' in revenue_response and revenue_response.get('data'):
+            daily_revenue = revenue_response['data']
+        elif isinstance(revenue_response, list):
+            daily_revenue = revenue_response
+        else:
+            logger.error(f"Unexpected API response structure: {revenue_response}")
+            await message.reply_text("❌ Неожиданный формат ответа от API")
+            return
+
+        if not daily_revenue:
             await message.reply_text("📈 Нет данных о доходах за последние 30 дней")
             return
 
-        daily_revenue = revenue_response['data']
+        logger.info(f"📈 Got {len(daily_revenue)} days of revenue data")
 
         from bot.utils.charts import generate_revenue_chart_from_server_data
         chart_path = await generate_revenue_chart_from_server_data(daily_revenue, [])
 
         with open(chart_path, 'rb') as photo:
-            total_revenue = sum(stat.get('totalRevenue', 0) for stat in daily_revenue)
+            total_revenue = sum(
+                stat.get('TotalRevenue', stat.get('totalRevenue', 0))
+                for stat in daily_revenue
+            )
+
             await message.reply_photo(
                 photo=photo,
                 caption=f"📈 График доходов за 30 дней (данные с сервера)\n\n"
@@ -332,9 +429,11 @@ async def send_revenue_chart(message):
             )
 
         os.remove(chart_path)
+        logger.info("✅ Revenue chart sent successfully")
 
     except Exception as e:
         logger.error(f"Error generating revenue chart: {e}")
+        logger.exception("Full traceback:")
         await message.reply_text(f"❌ Ошибка: {str(e)}")
 
 
@@ -435,7 +534,6 @@ async def admin_callback_button(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup=reply_markup,
         parse_mode='Markdown'
     )
-
 
 def register_admin_handlers(application):
     """Register admin handlers"""

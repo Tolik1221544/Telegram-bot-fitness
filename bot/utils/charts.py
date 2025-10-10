@@ -10,23 +10,12 @@ sns.set_palette("husl")
 
 
 async def generate_spending_chart_from_server_data(daily_stats: List[Dict]) -> str:
-    """
-    Generate coin spending chart from server data
-
-    Args:
-        daily_stats: List of daily statistics from server
-
-    Returns:
-        Path to generated chart file
-    """
     fig, ax = plt.subplots(figsize=(12, 6))
 
-    # Извлекаем данные
     dates = []
     amounts = []
 
     for stat in daily_stats:
-        # Преобразуем дату из строки
         date_str = stat.get('Date', stat.get('date', ''))
         if date_str:
             try:
@@ -39,20 +28,16 @@ async def generate_spending_chart_from_server_data(daily_stats: List[Dict]) -> s
     if not dates:
         raise ValueError("No valid data for chart")
 
-    # Сортируем по дате
     sorted_data = sorted(zip(dates, amounts), key=lambda x: x[0])
     dates, amounts = zip(*sorted_data)
 
-    # Строим график
     ax.plot(dates, amounts, marker='o', linewidth=2, markersize=8, color='#FF6B6B')
     ax.fill_between(dates, amounts, alpha=0.3, color='#FF6B6B')
 
-    # Настройки осей
     ax.set_xlabel('Дата', fontsize=12)
     ax.set_ylabel('Потрачено монет', fontsize=12)
     ax.set_title('График трат монет (данные с сервера)', fontsize=14, fontweight='bold')
 
-    # Форматирование дат на оси X
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%d.%m'))
     if len(dates) > 15:
         ax.xaxis.set_major_locator(mdates.DayLocator(interval=5))
@@ -60,10 +45,8 @@ async def generate_spending_chart_from_server_data(daily_stats: List[Dict]) -> s
         ax.xaxis.set_major_locator(mdates.DayLocator(interval=2))
     plt.xticks(rotation=45)
 
-    # Добавляем сетку
     ax.grid(True, alpha=0.3)
 
-    # Добавляем среднюю линию
     if amounts:
         avg = sum(amounts) / len(amounts)
         ax.axhline(y=avg, color='r', linestyle='--', alpha=0.7,
