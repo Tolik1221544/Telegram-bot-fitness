@@ -1,48 +1,23 @@
+import asyncio
+import uuid
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler
-from bot.database import db_manager, Payment
 from bot.api_client import api_client
 from bot.config import config
 import logging
-import uuid
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-
-class TributePayment:
-    """Tribute.tg payment integration"""
-
-    def __init__(self):
-        self.shop_url = "https://t.me/tribute/app?startapp=sDlI"
-
-    def get_payment_link(self, user_id: int, package_id: str) -> str:
-        """
-        Получить ссылку на магазин Tribute
-
-        ВАЖНО: Используем базовую ссылку без изменений,
-        так как Tribute не поддерживает передачу metadata через URL
-        """
-        return self.shop_url
-
+# Пакеты подписок
 SUBSCRIPTION_PACKAGES = [
     {
-        'id': 'year',
-        'name': 'Год',
-        'coins': 1200,
-        'days': 365,
-        'price': 20,
+        'id': '1month',
+        'name': '1 месяц',
+        'coins': 100,
+        'days': 30,
+        'price': 2,
         'currency': '€',
-        'description': '1200 монет на 365 дней'
-    },
-    {
-        'id': '6months',
-        'name': '6 месяцев',
-        'coins': 600,
-        'days': 180,
-        'price': 10,
-        'currency': '€',
-        'description': '600 монет на 180 дней'
+        'description': '100 монет на 30 дней'
     },
     {
         'id': '3months',
@@ -54,32 +29,38 @@ SUBSCRIPTION_PACKAGES = [
         'description': '300 монет на 90 дней'
     },
     {
-        'id': '1month',
-        'name': '1 месяц',
-        'coins': 100,
-        'days': 30,
-        'price': 2,
+        'id': '6months',
+        'name': '6 месяцев',
+        'coins': 600,
+        'days': 180,
+        'price': 10,
         'currency': '€',
-        'description': '100 монет на 30 дней'
+        'description': '600 монет на 180 дней'
+    },
+    {
+        'id': 'year',
+        'name': 'Год',
+        'coins': 1200,
+        'days': 365,
+        'price': 20,
+        'currency': '€',
+        'description': '1200 монет на 365 дней'
     }
 ]
 
-tribute = TributePayment()
 
 async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show available subscription packages"""
+    """Показать доступные подписки"""
     query = update.callback_query
     await query.answer()
 
     keyboard = []
-
     for package in SUBSCRIPTION_PACKAGES:
         button_text = f"📅 {package['name']} - {package['price']} {package['currency']}"
         callback_data = f"buy_package_{package['id']}"
         keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
 
     keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="start")])
-
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     text = """💳 **Покупка подписки LightWeight**
@@ -95,7 +76,7 @@ async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle subscription package selection"""
+    """Обработка выбора пакета подписки"""
     query = update.callback_query
     user = query.from_user
     callback_data = query.data
@@ -113,7 +94,10 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
 
     await query.answer()
 
+    # Проверяем связан ли аккаунт
+    from bot.database import db_manager
     db_user = await db_manager.get_user(user.id)
+
     if not db_user:
         await query.message.reply_text("❌ Используйте /start")
         return
@@ -126,48 +110,49 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
         )
         return
 
-    order_id = str(uuid.uuid4())
-    
-    async with db_manager.SessionLocal() as session:
-        payment = Payment(
-            user_id=db_user.id,
-            telegram_id=user.id,
-            payment_id=order_id,
-            amount=package['price'],
-            currency=package['currency'],
-            status='pending',
-            package_id=package['id'],
-            coins=package['coins'],
-            days=package.get('days', 0)
+    # Генерируем уникальный order_id
+    order_id = f"tg_{user.id}_{uuid.uuid4().hex[:8]}"
+
+    logger.info(f"💳 User {user.id} starting payment for {package['name']}")
+    logger.info(
+        f"📦 Package: {package['coins']} coins, {package['days']} days, {package['price']} {package['currency']}")
+    logger.info(f"🔗 Order ID: {order_id}")
+
+    # Создаём pending payment на бэкенде
+    try:
+        pending_result = await api_client._request(
+            'POST',
+            '/api/tribute-pending/create',
+            json_data={
+                'orderId': order_id,
+                'telegramId': user.id,
+                'amount': package['price'],
+                'currency': 'EUR',
+                'packageId': package['id'],
+                'coinsAmount': package['coins'],
+                'durationDays': package['days']
+            }
         )
-        session.add(payment)
-        await session.commit()
 
-    payment_url = tribute.get_payment_link(user.id, package['id'])
+        if not pending_result.get('success'):
+            logger.error(f"❌ Failed to create pending payment: {pending_result}")
+            await query.message.edit_text("❌ Ошибка создания платежа. Попробуйте позже.")
+            return
 
-    logger.info(f"💳 User {user.id} (@{user.username or 'no_username'}) started payment")
-    logger.info(f"📦 Package: {package['name']} - {package['price']} {package['currency']}")
-    logger.info(f"🔗 Payment URL: {payment_url}")
-    logger.info(f"👤 User info: {user.first_name} (ID: {user.id}, Email: {db_user.email})")
+        logger.info(f"✅ Pending payment created on backend")
 
-    keyboard = [
-        [InlineKeyboardButton(
-            "💳 Открыть магазин Tribute",
-            url=payment_url  # Обычный url для telegram-ссылок
-        )],
-        [InlineKeyboardButton("❌ Отменить", callback_data="subscriptions")]
-    ]
+    except Exception as e:
+        logger.error(f"❌ Error creating pending payment: {e}")
+        await query.message.edit_text("❌ Ошибка создания платежа. Попробуйте позже.")
+        return
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    # Ссылка на магазин Tribute (базовая без параметров)
+    payment_url = "https://t.me/tribute/app?startapp=sDlI"
 
     keyboard = [
-        [InlineKeyboardButton(
-            "💳 Открыть магазин Tribute",
-            url=payment_url
-        )],
+        [InlineKeyboardButton("💳 Открыть магазин Tribute", url=payment_url)],
         [InlineKeyboardButton("❌ Отменить", callback_data="subscriptions")]
     ]
-
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     text = f"""💳 **Оплата через Tribute**
@@ -177,22 +162,24 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
 📅 Период: {package['days']} дней
 💵 К оплате: **{package['price']} {package['currency']}**
 
+📝 **ID заказа:** `{order_id}`
+
 **Инструкция:**
 
-1️⃣ Нажмите кнопку "💳 Открыть магазин Tribute"
+1️⃣ Нажмите "💳 Открыть магазин Tribute"
 2️⃣ Выберите период: **{package['name']}** ({package['price']} {package['currency']})
 3️⃣ Выберите способ оплаты
 4️⃣ Подтвердите платёж
 
-⚡️ Монеты зачислятся автоматически после оплаты!
+⚡️ Монеты зачислятся **автоматически** в течение 2 минут после оплаты!
 
-💡 После оплаты проверьте баланс: /balance
+💡 Бэкенд проверяет статус каждые 2 минуты.
 """
 
     await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
 
 def register_payment_handlers(application):
-    """Register handlers"""
+    """Регистрация handlers"""
     application.add_handler(CallbackQueryHandler(show_subscriptions, pattern="^subscriptions$"))
     application.add_handler(CallbackQueryHandler(handle_package_selection, pattern="^buy_package_"))

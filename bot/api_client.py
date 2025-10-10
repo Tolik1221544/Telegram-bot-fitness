@@ -128,11 +128,26 @@ class APIClient:
             '/api/stats/user',
             headers={'Authorization': f'Bearer {token}'}
         )
-async def check_payment_status(self, order_id: str) -> Dict:
-    """Check payment status"""
-    return await self._request(
-        'GET',
-        f'/api/payment/check/{order_id}'
-    )
-
+    async def check_payment_status(self, order_id: str) -> Dict:
+        """Check payment status"""
+        return await self._request(
+            'GET',
+            f'/api/payment/check/{order_id}'
+        )
+    async def create_pending_payment(self, order_id: str, telegram_id: int, amount: float,
+                                     currency: str, package_id: str, coins_amount: int, duration_days: int):
+        """Create pending payment on backend"""
+        return await self._request(
+            'POST',
+            '/api/tribute-pending/create',
+            json_data={
+                'orderId': order_id,
+                'telegramId': telegram_id,
+                'amount': amount,
+                'currency': currency,
+                'packageId': package_id,
+                'coinsAmount': coins_amount,
+                'durationDays': duration_days
+            }
+        )
 api_client = APIClient()

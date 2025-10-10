@@ -249,140 +249,93 @@ async def create_referral_link(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def send_spending_chart(message):
-    """Send coin spending chart"""
+    """Отправить график трат монет (данные с бэкенда)"""
     try:
-        async with db_manager.SessionLocal() as session:
-            # ИСПРАВЛЕНИЕ: Используем правильную таблицу и проверяем наличие данных
-            from bot.database import LwCoinTransaction
+        # Получаем данные с бэкенда вместо локальной БД
+        from bot.api_client import api_client
 
-            start_date = datetime.utcnow() - timedelta(days=30)
+        # Нужен токен админа
+        admin_user = await db_manager.get_user(
+            message.from_user.id if hasattr(message, 'from_user') else message.chat.id)
 
-            # Сначала проверим, есть ли вообще данные
-            count_result = await session.execute(
-                select(func.count(LwCoinTransaction.id))
-                .where(LwCoinTransaction.created_at >= start_date)
-                .where(LwCoinTransaction.amount < 0)
+        if not admin_user or not admin_user.api_token:
+            await message.reply_text("❌ Админ должен быть привязан к аккаунту")
+            return
+
+        # Запрос к бэкенду за статистикой трат
+        stats_response = await api_client._request(
+            'GET',
+            '/api/stats/coin-spending-daily?days=30',
+            headers={'Authorization': f'Bearer {admin_user.api_token}'}
+        )
+
+        if not stats_response or not stats_response.get('data'):
+            await message.reply_text("📊 Нет данных о тратах за последние 30 дней")
+            return
+
+        daily_stats = stats_response['data']
+
+        # Генерируем график
+        from bot.utils.charts import generate_spending_chart_from_server_data
+        chart_path = await generate_spending_chart_from_server_data(daily_stats)
+
+        with open(chart_path, 'rb') as photo:
+            total_spent = sum(stat.get('totalSpent', 0) for stat in daily_stats)
+            await message.reply_photo(
+                photo=photo,
+                caption=f"📊 График трат монет за 30 дней (данные с сервера)\n\n"
+                        f"💸 Всего потрачено: {total_spent} монет\n"
+                        f"📅 Дней с активностью: {len(daily_stats)}"
             )
-            total_records = count_result.scalar()
 
-            logger.info(f"📊 Found {total_records} spending records in last 30 days")
-
-            if total_records == 0:
-                # Создаём тестовые данные для демонстрации
-                await message.reply_text(
-                    "📊 **Нет данных о тратах за последние 30 дней**\n\n"
-                )
-                return
-
-            # Получаем данные по дням
-            result = await session.execute(
-                select(
-                    func.date(LwCoinTransaction.created_at).label('date'),
-                    func.sum(func.abs(LwCoinTransaction.amount)).label('total')
-                )
-                .where(LwCoinTransaction.created_at >= start_date)
-                .where(LwCoinTransaction.amount < 0)
-                .group_by(func.date(LwCoinTransaction.created_at))
-                .order_by(func.date(LwCoinTransaction.created_at))
-            )
-
-            data = result.all()
-
-            if not data:
-                await message.reply_text("📊 Нет данных о тратах за последние 30 дней")
-                return
-
-            # Generate chart
-            chart_path = await generate_spending_chart(data)
-
-            with open(chart_path, 'rb') as photo:
-                await message.reply_photo(
-                    photo=photo,
-                    caption=f"📊 График трат монет за 30 дней\n\n"
-                            f"📉 Всего записей: {total_records}\n"
-                            f"📅 Дней с активностью: {len(data)}"
-                )
-
-            # Cleanup
-            os.remove(chart_path)
+        os.remove(chart_path)
 
     except Exception as e:
         logger.error(f"Error generating spending chart: {e}")
         logger.exception("Full traceback:")
-        await message.reply_text(
-            f"❌ Ошибка генерации графика\n\n"
-            f"Детали: {str(e)}\n\n"
-            f"Проверьте логи для подробностей."
-        )
+        await message.reply_text(f"❌ Ошибка генерации графика: {str(e)}")
 
 
 async def send_revenue_chart(message):
-    """Send revenue chart"""
+    """Отправить график доходов (данные с бэкенда)"""
     try:
-        async with db_manager.SessionLocal() as session:
-            start_date = datetime.utcnow() - timedelta(days=30)
+        admin_user = await db_manager.get_user(
+            message.from_user.id if hasattr(message, 'from_user') else message.chat.id)
 
-            # ИСПРАВЛЕНИЕ: Проверяем наличие данных
-            count_result = await session.execute(
-                select(func.count(Payment.id))
-                .where(Payment.status == 'completed')
-                .where(Payment.completed_at >= start_date)
-            )
-            total_records = count_result.scalar()
+        if not admin_user or not admin_user.api_token:
+            await message.reply_text("❌ Админ должен быть привязан к аккаунту")
+            return
 
-            logger.info(f"📈 Found {total_records} completed payments in last 30 days")
+        # Запрос к бэкенду
+        revenue_response = await api_client._request(
+            'GET',
+            '/api/stats/revenue-daily?days=30',
+            headers={'Authorization': f'Bearer {admin_user.api_token}'}
+        )
 
-            if total_records == 0:
-                await message.reply_text(
-                    "📈 **Нет данных о доходах за последние 30 дней**\n\n"
-                    "Данные появятся после первых успешных платежей через Tribute.\n\n"
-                    "💡 Убедитесь, что:\n"
-                    "• Webhook настроен в Tribute\n"
-                    "• Платежи имеют статус 'completed'\n"
-                    "• Поле completed_at заполняется"
-                )
-                return
+        if not revenue_response or not revenue_response.get('data'):
+            await message.reply_text("📈 Нет данных о доходах за последние 30 дней")
+            return
 
-            result = await session.execute(
-                select(
-                    func.date(Payment.completed_at).label('date'),
-                    func.sum(Payment.amount).label('total')
-                )
-                .where(Payment.status == 'completed')
-                .where(Payment.completed_at >= start_date)
-                .group_by(func.date(Payment.completed_at))
-                .order_by(func.date(Payment.completed_at))
+        daily_revenue = revenue_response['data']
+
+        from bot.utils.charts import generate_revenue_chart_from_server_data
+        chart_path = await generate_revenue_chart_from_server_data(daily_revenue, [])
+
+        with open(chart_path, 'rb') as photo:
+            total_revenue = sum(stat.get('totalRevenue', 0) for stat in daily_revenue)
+            await message.reply_photo(
+                photo=photo,
+                caption=f"📈 График доходов за 30 дней (данные с сервера)\n\n"
+                        f"💰 Всего: {total_revenue:.2f} €\n"
+                        f"📅 Дней с платежами: {len(daily_revenue)}"
             )
 
-            data = result.all()
-
-            if not data:
-                await message.reply_text("📈 Нет данных о доходах за последние 30 дней")
-                return
-
-            # Generate chart
-            chart_path = await generate_revenue_chart(data)
-
-            with open(chart_path, 'rb') as photo:
-                total_revenue = sum(row[1] for row in data)
-                await message.reply_photo(
-                    photo=photo,
-                    caption=f"📈 График доходов за 30 дней\n\n"
-                            f"💰 Всего платежей: {total_records}\n"
-                            f"💵 Общий доход: {total_revenue:.2f} €\n"
-                            f"📅 Дней с платежами: {len(data)}"
-                )
-
-            os.remove(chart_path)
+        os.remove(chart_path)
 
     except Exception as e:
         logger.error(f"Error generating revenue chart: {e}")
-        logger.exception("Full traceback:")
-        await message.reply_text(
-            f"❌ Ошибка генерации графика\n\n"
-            f"Детали: {str(e)}\n\n"
-            f"Проверьте логи для подробностей."
-        )
+        await message.reply_text(f"❌ Ошибка: {str(e)}")
 
 
 async def show_referral_links(message):
