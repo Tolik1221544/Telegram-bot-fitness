@@ -205,10 +205,30 @@ async def handle_code_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         result = await api_client.confirm_email(email, code)
 
         if 'accessToken' in result:
-            # Save token to database
             user = update.effective_user
             db_user = await db_manager.get_user(user.id)
 
+            try:
+                link_result = await api_client._request(
+                    'POST',
+                    '/api/user/link-telegram',
+                    headers={'Authorization': f'Bearer {result["accessToken"]}'},
+                    json_data={
+                        'telegramId': user.id,
+                        'username': user.username or ""
+                    }
+                )
+
+                if link_result.get('success'):
+                    logger.info(f"✅ Telegram ID {user.id} successfully linked to backend account")
+                else:
+                    logger.warning(f"⚠️ Failed to link Telegram ID on backend: {link_result}")
+
+            except Exception as link_error:
+                logger.error(f"❌ Error linking Telegram ID to backend: {link_error}")
+                # Продолжаем даже если не удалось привязать - попробуем позже
+
+            # Сохраняем токен в локальной БД бота
             async with db_manager.SessionLocal() as session:
                 db_user.email = email
                 db_user.api_token = result['accessToken']
@@ -219,15 +239,30 @@ async def handle_code_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [[InlineKeyboardButton("🏠 В меню", callback_data="start")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
+            try:
+                balance = await api_client.get_balance(result['accessToken'])
+                balance_text = f"\n💰 Ваш баланс: {balance.get('balance', 0)} монет"
+
+                if balance.get('hasActiveSubscription'):
+                    expiry = balance.get('subscriptionExpiresAt', '')
+                    if expiry and len(expiry) >= 10:
+                        balance_text += f"\n📅 Подписка активна до: {expiry[:10]}"
+            except:
+                balance_text = ""
+
             await update.message.reply_text(
-                "✅ Аккаунт успешно связан!\n\n"
-                "Теперь вы можете пользоваться всеми функциями бота.",
+                f"✅ Аккаунт успешно связан!{balance_text}\n\n"
+                "🔗 Telegram ID привязан к вашему аккаунту\n\n"
+                "Теперь вы можете:\n"
+                "• Покупать подписки через Tribute\n"
+                "• Отслеживать баланс монет\n"
+                "• Видеть статистику использования",
                 reply_markup=reply_markup
             )
 
             context.user_data.clear()
 
-            logger.info(f"User {user.id} successfully linked account")
+            logger.info(f"User {user.id} successfully linked account with backend")
 
             return ConversationHandler.END
         else:
@@ -240,8 +275,8 @@ async def handle_code_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return USER_AWAITING_CODE
 
-    except Exception as e:
-        logger.error(f"Error confirming code: {e}")
+    except Exception as ex:
+        logger.error(f"Error confirming code: {ex}")
 
         keyboard = [[InlineKeyboardButton("🔙 В меню", callback_data="start")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
