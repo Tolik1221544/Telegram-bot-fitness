@@ -91,36 +91,38 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     await query.answer()
 
-    # Логируем для отладки
     logger.info(f"Admin callback: {query.data} from user {user.id}")
+
+    context.user_data.clear()
 
     if query.data == "admin_set_reg_coins":
         await query.message.reply_text(
             f"💰 Введите новое количество монет при регистрации\n"
-            f"Текущее: {config.DEFAULT_REGISTRATION_COINS}"
+            f"Текущее: {config.DEFAULT_REGISTRATION_COINS}\n\n"
+            f"Или /cancel для отмены"
         )
         return ADMIN_SET_REG_COINS
 
     elif query.data == "admin_set_user_coins":
         await query.message.reply_text(
-            "💸 Введите email пользователя:"
+            "💸 Введите email пользователя:\n\n"
+            "Или /cancel для отмены"
         )
         return ADMIN_SET_USER_EMAIL
 
     elif query.data == "admin_spending_chart":
-        # Передаем правильный message объект
         await send_spending_chart(query.message)
         return ConversationHandler.END
 
     elif query.data == "admin_revenue_chart":
-        # Передаем правильный message объект
         await send_revenue_chart(query.message)
         return ConversationHandler.END
 
     elif query.data == "admin_create_referral":
         await query.message.reply_text(
             "🔗 Введите название для реферальной ссылки\n"
-            "Например: Фитнес-центр Москва"
+            "Например: Фитнес-центр Москва\n\n"
+            "Или /cancel для отмены"
         )
         return ADMIN_CREATE_REFERRAL
 
@@ -136,34 +138,54 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def set_registration_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Set registration bonus coins"""
     try:
         coins = int(update.message.text)
         if coins < 0:
             raise ValueError("Negative coins")
 
         config.DEFAULT_REGISTRATION_COINS = coins
-        await update.message.reply_text(f"✅ Бонус регистрации: {coins} монет")
+
+        keyboard = [[InlineKeyboardButton("🔙 В админ панель", callback_data="admin")]]
+
+        await update.message.reply_text(
+            f"✅ Бонус регистрации установлен: {coins} монет",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
     except ValueError:
-        await update.message.reply_text("❌ Введите корректное число")
+        keyboard = [[InlineKeyboardButton("❌ Отменить", callback_data="admin")]]
+        await update.message.reply_text(
+            "❌ Введите корректное число",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return ADMIN_SET_REG_COINS
 
     return ConversationHandler.END
 
 
 async def set_user_coins_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Step 1: Get email"""
     email = update.message.text.strip()
+
+    if '@' not in email or '.' not in email:
+        keyboard = [[InlineKeyboardButton("❌ Отменить", callback_data="admin")]]
+        await update.message.reply_text(
+            "❌ Неверный формат email. Попробуйте снова:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return ADMIN_SET_USER_EMAIL
+
     context.user_data['admin_target_email'] = email
+
+    keyboard = [[InlineKeyboardButton("❌ Отменить", callback_data="admin")]]
 
     await update.message.reply_text(
         f"📧 Email: {email}\n"
-        "💰 Теперь введите количество монет:"
+        "💰 Теперь введите количество монет:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
     return ADMIN_SET_USER_AMOUNT
 
 
 async def set_user_coins_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Step 2: Get amount and set coins"""
     try:
         coins = int(update.message.text)
         if coins < 0:
@@ -171,16 +193,20 @@ async def set_user_coins_amount(update: Update, context: ContextTypes.DEFAULT_TY
 
         email = context.user_data.get('admin_target_email')
         if not email:
-            await update.message.reply_text("❌ Ошибка: email не найден")
+            await update.message.reply_text("❌ Ошибка: email не найден. Начните заново: /admin")
             return ConversationHandler.END
+
+        keyboard = [[InlineKeyboardButton("🔙 В админ панель", callback_data="admin")]]
 
         # Send verification code
         success = await api_client.send_verification_code(email)
         if not success:
-            await update.message.reply_text(f"❌ Пользователь {email} не найден")
+            await update.message.reply_text(
+                f"❌ Пользователь {email} не найден",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
             return ConversationHandler.END
 
-        # Auto-confirm for test accounts
         test_codes = {
             'test@lightweightfit.com': '123456',
             'demo@lightweightfit.com': '111111',
@@ -197,19 +223,30 @@ async def set_user_coins_amount(update: Update, context: ContextTypes.DEFAULT_TY
             await api_client.set_balance(token, coins, 'admin')
 
             await update.message.reply_text(
-                f"✅ Установлено {coins} монет для {email}"
+                f"✅ Установлено {coins} монет для {email}",
+                reply_markup=InlineKeyboardMarkup(keyboard)
             )
         else:
             await update.message.reply_text(
                 f"📧 Код отправлен на {email}\n"
-                f"Пользователь должен подтвердить в приложении"
+                f"Пользователь должен подтвердить в приложении",
+                reply_markup=InlineKeyboardMarkup(keyboard)
             )
 
     except ValueError:
-        await update.message.reply_text("❌ Введите корректное число")
+        keyboard = [[InlineKeyboardButton("❌ Отменить", callback_data="admin")]]
+        await update.message.reply_text(
+            "❌ Введите корректное число",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return ADMIN_SET_USER_AMOUNT
     except Exception as e:
         logger.error(f"Error setting user coins: {e}")
-        await update.message.reply_text(f"❌ Ошибка: {e}")
+        keyboard = [[InlineKeyboardButton("🔙 В админ панель", callback_data="admin")]]
+        await update.message.reply_text(
+            f"❌ Ошибка: {e}",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
     finally:
         # Cleanup
         if 'admin_target_email' in context.user_data:
@@ -222,11 +259,15 @@ async def create_referral_link(update: Update, context: ContextTypes.DEFAULT_TYP
     """Create new referral link"""
     name = update.message.text.strip()
 
+    keyboard = [[InlineKeyboardButton("🔙 В админ панель", callback_data="admin")]]
+
     if not name:
-        await update.message.reply_text("❌ Название не может быть пустым")
+        await update.message.reply_text(
+            "❌ Название не может быть пустым",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         return ConversationHandler.END
 
-    # Generate unique code
     code = str(uuid.uuid4())[:8]
 
     async with db_manager.SessionLocal() as session:
@@ -247,23 +288,28 @@ async def create_referral_link(update: Update, context: ContextTypes.DEFAULT_TYP
         f"🔗 Ссылка: `{link_url}`\n"
         f"📊 Код: {code}\n\n"
         f"Отправьте эту ссылку партнерам для отслеживания",
-        parse_mode='Markdown'
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
     return ConversationHandler.END
 
 
 async def send_spending_chart(message):
-    """Отправить график трат монет (данные с бэкенда)"""
     try:
         from bot.api_client import api_client
 
-        if hasattr(message, 'from_user'):
-            user_id = message.from_user.id
+        # ✅ ИСПРАВЛЕНИЕ: Правильно получаем user_id в зависимости от типа message
+        if hasattr(message, 'chat_id'):
+            # Это callback_query.message
+            user_id = message.chat_id
         elif hasattr(message, 'chat'):
+            # Это обычное сообщение
             user_id = message.chat.id
         else:
-            user_id = message.chat.id
+            logger.error(f"❌ Cannot extract user_id from message object")
+            await message.reply_text("❌ Ошибка определения пользователя")
+            return
 
         logger.info(f"📊 Getting spending chart for admin user_id: {user_id}")
 
@@ -272,7 +318,7 @@ async def send_spending_chart(message):
 
         if not admin_user:
             logger.error(f"❌ Admin user {user_id} not found in DB")
-            await message.reply_text("❌ Админ не найден в БД. Используйте /start")
+            await message.reply_text("❌ Админ не найден. Сначала свяжите аккаунт через email")
             return
 
         if not admin_user.api_token:
@@ -331,7 +377,7 @@ async def send_spending_chart(message):
 
             await message.reply_photo(
                 photo=photo,
-                caption=f"📊 График трат монет за 30 дней (данные с сервера)\n\n"
+                caption=f"📊 График трат монет за 30 дней\n\n"
                         f"💸 Всего потрачено: {total_spent} монет\n"
                         f"📅 Дней с активностью: {len(daily_stats)}"
             )
@@ -346,17 +392,17 @@ async def send_spending_chart(message):
 
 
 async def send_revenue_chart(message):
-    """Отправить график доходов (данные с бэкенда)"""
     try:
         from bot.api_client import api_client
 
-        # Правильно получаем user_id
-        if hasattr(message, 'from_user'):
-            user_id = message.from_user.id
+        if hasattr(message, 'chat_id'):
+            user_id = message.chat_id
         elif hasattr(message, 'chat'):
             user_id = message.chat.id
         else:
-            user_id = message.chat.id
+            logger.error(f"❌ Cannot extract user_id from message object")
+            await message.reply_text("❌ Ошибка определения пользователя")
+            return
 
         logger.info(f"📈 Getting revenue chart for admin user_id: {user_id}")
 
@@ -394,7 +440,6 @@ async def send_revenue_chart(message):
             await message.reply_text("📈 API вернул пустой ответ")
             return
 
-        # Проверяем структуру ответа
         if 'data' in revenue_response:
             daily_revenue = revenue_response['data']
         elif 'success' in revenue_response and revenue_response.get('data'):
@@ -423,7 +468,7 @@ async def send_revenue_chart(message):
 
             await message.reply_photo(
                 photo=photo,
-                caption=f"📈 График доходов за 30 дней (данные с сервера)\n\n"
+                caption=f"📈 График доходов за 30 дней\n\n"
                         f"💰 Всего: {total_revenue:.2f} €\n"
                         f"📅 Дней с платежами: {len(daily_revenue)}"
             )
@@ -499,8 +544,15 @@ async def show_user_stats(message):
 
 
 async def cancel_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancel admin action"""
-    await update.message.reply_text("❌ Отменено\n/admin - вернуться в панель")
+
+    context.user_data.clear()
+
+    keyboard = [[InlineKeyboardButton("🔙 В админ панель", callback_data="admin")]]
+
+    await update.message.reply_text(
+        "❌ Действие отменено",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
     return ConversationHandler.END
 
 
@@ -536,28 +588,42 @@ async def admin_callback_button(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
 def register_admin_handlers(application):
-    """Register admin handlers"""
     application.add_handler(CommandHandler("admin", admin_command))
-
     application.add_handler(CallbackQueryHandler(admin_callback_button, pattern="^admin$"))
 
     admin_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(handle_admin_callback, pattern="^admin_")],
+        entry_points=[
+            CallbackQueryHandler(handle_admin_callback, pattern="^admin_")
+        ],
         states={
             ADMIN_SET_REG_COINS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, set_registration_coins)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, set_registration_coins),
+                CallbackQueryHandler(cancel_admin_action, pattern="^admin$")
             ],
             ADMIN_SET_USER_EMAIL: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, set_user_coins_email)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, set_user_coins_email),
+                CallbackQueryHandler(cancel_admin_action, pattern="^admin$")
             ],
             ADMIN_SET_USER_AMOUNT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, set_user_coins_amount)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, set_user_coins_amount),
+                CallbackQueryHandler(cancel_admin_action, pattern="^admin$")
             ],
             ADMIN_CREATE_REFERRAL: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, create_referral_link)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, create_referral_link),
+                CallbackQueryHandler(cancel_admin_action, pattern="^admin$")
             ]
         },
-        fallbacks=[CommandHandler("cancel", cancel_admin_action)]
+        fallbacks=[
+            CommandHandler("cancel", cancel_admin_action),
+            CommandHandler("start", cancel_admin_action),
+            CallbackQueryHandler(cancel_admin_action, pattern="^admin$"),
+            CallbackQueryHandler(admin_callback_button, pattern="^admin$")
+        ],
+        per_user=True,
+        per_chat=True,
+        per_message=False,
+        allow_reentry=True,
+        conversation_timeout=300
     )
 
     application.add_handler(admin_conv)

@@ -49,126 +49,67 @@ SUBSCRIPTION_PACKAGES = [
 
 
 async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показать доступные подписки"""
+    """Показать доступные подписки с прямой ссылкой на Tribute"""
     query = update.callback_query
     await query.answer()
 
-    keyboard = []
-    for package in SUBSCRIPTION_PACKAGES:
-        button_text = f"📅 {package['name']} - {package['price']} {package['currency']}"
-        callback_data = f"buy_package_{package['id']}"
-        keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
-
-    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="start")])
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    text = """💳 **Покупка подписки LightWeight**
-
-✅ Оплата через Tribute
-✅ Безопасно и удобно
-✅ Поддержка карт любых стран
-✅ Автоматическое начисление монет
-
-Выберите период подписки:"""
-
-    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='Markdown')
-
-
-async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка выбора пакета подписки"""
-    query = update.callback_query
     user = query.from_user
-    callback_data = query.data
 
-    if callback_data.startswith("buy_package_"):
-        package_id = callback_data.replace("buy_package_", "")
-        package = next((p for p in SUBSCRIPTION_PACKAGES if p['id'] == package_id), None)
-    else:
-        await query.answer("❌ Пакет не найден", show_alert=True)
-        return
-
-    if not package:
-        await query.answer("❌ Пакет не найден", show_alert=True)
-        return
-
-    await query.answer()
-
+    # Проверяем что пользователь привязал аккаунт
     from bot.database import db_manager
     db_user = await db_manager.get_user(user.id)
 
     if not db_user:
-        await query.message.reply_text("❌ Используйте /start")
+        await query.message.edit_text("❌ Используйте /start")
         return
 
     if not db_user.api_token:
-        keyboard = [[InlineKeyboardButton("🔗 Связать аккаунт", callback_data="link_account")]]
-        await query.message.reply_text(
-            "❌ Сначала свяжите аккаунт",
+        keyboard = [
+            [InlineKeyboardButton("🔗 Сначала свяжите аккаунт", callback_data="link_account")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="start")]
+        ]
+        await query.message.edit_text(
+            "❌ Для покупки подписки сначала нужно связать аккаунт с приложением.",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
 
-    order_id = f"tg_{user.id}_{uuid.uuid4().hex[:8]}"
+    # Формируем текст с описанием всех тарифов
+    text = """💳 **LightWeight PAY**
 
-    logger.info(f"💳 User {user.id} starting payment for {package['name']}")
-    logger.info(
-        f"📦 Package: {package['coins']} coins, {package['days']} days, {package['price']} {package['currency']}")
-    logger.info(f"🔗 Order ID: {order_id}")
+Здесь вы можете купить LW coins со скидкой, оплатить картой любой страны и любым удобным способом.
 
-    try:
-        pending_result = await api_client._request(
-            'POST',
-            '/api/tribute-pending/create',
-            json_data={
-                'orderId': order_id,
-                'telegramId': user.id,
-                'amount': package['price'],
-                'currency': 'EUR',
-                'packageId': package['id'],
-                'coinsAmount': package['coins'],
-                'durationDays': package['days']
-            }
-        )
+**📋 Доступные тарифы:**
 
-        if not pending_result.get('success'):
-            logger.error(f"❌ Failed to create pending payment: {pending_result}")
-            await query.message.edit_text("❌ Ошибка создания платежа. Попробуйте позже.")
-            return
+"""
 
-        logger.info(f"✅ Pending payment created on backend")
+    # Добавляем все тарифы текстом
+    for package in SUBSCRIPTION_PACKAGES:
+        text += f"• **{package['name']}** — {package['price']} {package['currency']}\n"
+        text += f"  └ {package['coins']} монет на {package['days']} дней\n\n"
 
-    except Exception as e:
-        logger.error(f"❌ Error creating pending payment: {e}")
-        await query.message.edit_text("❌ Ошибка создания платежа. Попробуйте позже.")
-        return
-
-    payment_url = "https://t.me/tribute/app?startapp=sDlI"
-
-    keyboard = [
-        [InlineKeyboardButton("💳 Открыть магазин Tribute", url=payment_url)],
-        [InlineKeyboardButton("❌ Отменить", callback_data="subscriptions")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    text = f"""💳 **Оплата через Tribute**
-
-📦 Пакет: **{package['name']}**
-💰 Монет: {package['coins']}
-📅 Период: {package['days']} дней
-💵 К оплате: **{package['price']} {package['currency']}**
-
-📝 **ID заказа:** `{order_id}`
-
-**Инструкция:**
-
-1️⃣ Нажмите "💳 Открыть магазин Tribute"
-2️⃣ Выберите период: **{package['name']}** ({package['price']} {package['currency']})
+    text += """**Как купить:**
+1️⃣ Нажмите кнопку "💳 Открыть магазин Tribute"
+2️⃣ Выберите нужный период подписки
 3️⃣ Выберите способ оплаты
 4️⃣ Подтвердите платёж
 
 ⚡️ Монеты зачислятся **автоматически** в течение 2 минут после оплаты!
 
-"""
+✅ Безопасно и удобно
+✅ Поддержка карт любых стран
+✅ Автоматическое начисление монет"""
+
+    logger.info(f"💳 User {user.id} opening Tribute store (no pending payment created)")
+
+    # Прямая ссылка на Tribute
+    payment_url = "https://t.me/tribute/app?startapp=sDlI"
+
+    keyboard = [
+        [InlineKeyboardButton("💳 Открыть магазин Tribute", url=payment_url)],
+        [InlineKeyboardButton("🔙 Назад", callback_data="start")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
 
     await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
@@ -176,4 +117,3 @@ async def handle_package_selection(update: Update, context: ContextTypes.DEFAULT
 def register_payment_handlers(application):
     """Регистрация handlers"""
     application.add_handler(CallbackQueryHandler(show_subscriptions, pattern="^subscriptions$"))
-    application.add_handler(CallbackQueryHandler(handle_package_selection, pattern="^buy_package_"))
