@@ -1,10 +1,7 @@
-import asyncio
-import uuid
+
+import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler
-from bot.api_client import api_client
-from bot.config import config
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +46,6 @@ SUBSCRIPTION_PACKAGES = [
 
 
 async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показать доступные подписки с прямой ссылкой на Tribute"""
     query = update.callback_query
     await query.answer()
 
@@ -74,21 +70,18 @@ async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
 
-    # Формируем текст с описанием всех тарифов
     text = """💳 **LightWeight PAY**
 
 Здесь вы можете купить LW coins со скидкой, оплатить картой любой страны и любым удобным способом.
 
 **📋 Доступные тарифы:**
 
-"""
+- **1 месяц** — 2 € → 100 монет на 30 дней
+- **3 месяца** — 5 € → 300 монет на 90 дней
+- **6 месяцев** — 10 € → 600 монет на 180 дней
+- **Год** — 20 € → 1200 монет на 365 дней
 
-    # Добавляем все тарифы текстом
-    for package in SUBSCRIPTION_PACKAGES:
-        text += f"• **{package['name']}** — {package['price']} {package['currency']}\n"
-        text += f"  └ {package['coins']} монет на {package['days']} дней\n\n"
-
-    text += """**Как купить:**
+**Как купить:**
 1️⃣ Нажмите кнопку "💳 Открыть магазин Tribute"
 2️⃣ Выберите нужный период подписки
 3️⃣ Выберите способ оплаты
@@ -100,10 +93,9 @@ async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE)
 ✅ Поддержка карт любых стран
 ✅ Автоматическое начисление монет"""
 
-    logger.info(f"💳 User {user.id} opening Tribute store (no pending payment created)")
-
-    # Прямая ссылка на Tribute
     payment_url = "https://t.me/tribute/app?startapp=sDlI"
+
+    logger.info(f"💳 User {user.id} opening Tribute store (direct link)")
 
     keyboard = [
         [InlineKeyboardButton("💳 Открыть магазин Tribute", url=payment_url)],
