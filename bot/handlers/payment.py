@@ -1,47 +1,17 @@
-
 import logging
+import time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler
 
 logger = logging.getLogger(__name__)
 
+TRIBUTE_STORE_LINK = "https://t.me/tribute/app?startapp=sDlI"
+
 SUBSCRIPTION_PACKAGES = [
-    {
-        'id': '1month',
-        'name': '1 месяц',
-        'coins': 100,
-        'days': 30,
-        'price': 2,
-        'currency': '€',
-        'description': '100 монет на 30 дней'
-    },
-    {
-        'id': '3months',
-        'name': '3 месяца',
-        'coins': 300,
-        'days': 90,
-        'price': 5,
-        'currency': '€',
-        'description': '300 монет на 90 дней'
-    },
-    {
-        'id': '6months',
-        'name': '6 месяцев',
-        'coins': 600,
-        'days': 180,
-        'price': 10,
-        'currency': '€',
-        'description': '600 монет на 180 дней'
-    },
-    {
-        'id': 'year',
-        'name': 'Год',
-        'coins': 1200,
-        'days': 365,
-        'price': 20,
-        'currency': '€',
-        'description': '1200 монет на 365 дней'
-    }
+    {'id': '1month', 'name': '1 месяц', 'coins': 100, 'days': 30, 'price': 2},
+    {'id': '3months', 'name': '3 месяца', 'coins': 300, 'days': 90, 'price': 5},
+    {'id': '6months', 'name': '6 месяцев', 'coins': 600, 'days': 180, 'price': 10},
+    {'id': 'year', 'name': 'Год', 'coins': 1200, 'days': 365, 'price': 20}
 ]
 
 
@@ -93,12 +63,10 @@ async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE)
 ✅ Поддержка карт любых стран
 ✅ Автоматическое начисление монет"""
 
-    payment_url = "https://t.me/tribute/app?startapp=sDlI"
-
-    logger.info(f"💳 User {user.id} opening Tribute store (direct link)")
+    logger.info(f"💳 User {user.id} ({db_user.email}) opening Tribute store")
 
     keyboard = [
-        [InlineKeyboardButton("💳 Открыть магазин Tribute", url=payment_url)],
+        [InlineKeyboardButton("💳 Открыть магазин Tribute", url=TRIBUTE_STORE_LINK)],
         [InlineKeyboardButton("🔙 Назад", callback_data="start")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
