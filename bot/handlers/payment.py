@@ -77,17 +77,13 @@ async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE)
 **Как купить:**
 1️⃣ Нажмите кнопку "💳 Открыть магазин Tribute"
 2️⃣ Выберите нужный период подписки
-3️⃣ В поле комментарий укажите: {user.id}
-4️⃣ Оплатите и нажмите "Проверить платёж"
+3️⃣ Добавьте удобный для вас способ оплаты и оплатите покупку
 
 ⚡️ Монеты зачислятся автоматически в течение 2 минут!
-
-📝 Ваш Order ID: {order_id}
-👤 Ваш Telegram ID: {user.id}"""
+"""
 
     keyboard = [
         [InlineKeyboardButton("💳 Открыть магазин Tribute", url=TRIBUTE_STORE_LINK)],
-        [InlineKeyboardButton("🔄 Проверить платёж", callback_data=f"check_payment_{order_id}")],
         [InlineKeyboardButton("🔙 Назад", callback_data="start")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -96,7 +92,6 @@ async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def check_payment_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Проверка статуса платежа"""
     query = update.callback_query
     await query.answer()
 
