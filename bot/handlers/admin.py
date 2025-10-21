@@ -512,35 +512,70 @@ async def show_referral_links(message):
 
 
 async def show_user_stats(message):
-    """Show detailed user statistics"""
-    async with db_manager.SessionLocal() as session:
-        result = await session.execute(
-            select(
-                User.referred_by,
-                func.count(User.id).label('count')
-            )
-            .group_by(User.referred_by)
+    """Show detailed user statistics FROM BACKEND"""
+    if hasattr(message, 'chat_id'):
+        user_id = message.chat_id
+    else:
+        user_id = message.chat.id
+
+    admin_user = await db_manager.get_user(user_id)
+
+    if not admin_user or not admin_user.api_token:
+        await message.reply_text("❌ Сначала привяжите аккаунт через /start")
+        return
+
+    try:
+        from bot.api_client import api_client
+
+        logger.info(f"📊 Getting user stats from backend for admin {user_id}")
+
+        # 1. ✅ Используем /api/health/db-info
+        db_info = await api_client._request(
+            'GET',
+            '/api/health/db-info'
         )
-        referral_stats = result.all()
 
-        result = await session.execute(
-            select(func.count(Payment.id))
-            .where(Payment.status == 'completed')
-            .where(Payment.completed_at >= datetime.utcnow() - timedelta(days=30))
+        total_users = db_info.get('users', 0)
+        total_activities = db_info.get('activities', 0)
+        total_food_intakes = db_info.get('foodIntakes', 0)
+        total_steps_records = db_info.get('stepsRecords', 0)
+
+        revenue_stats = await api_client._request(
+            'GET',
+            '/api/stats/revenue-by-source?days=30',
+            headers={'Authorization': f'Bearer {admin_user.api_token}'}
         )
-        active_subs = result.scalar()
 
-    text = "👥 **Статистика пользователей:**\n\n"
-    text += f"🔄 Активных подписок: {active_subs}\n\n"
-    text += "**Источники регистраций:**\n"
+        tribute_count = revenue_stats.get('data', {}).get('tribute', {}).get('count', 0)
+        mobile_count = revenue_stats.get('data', {}).get('mobile', {}).get('count', 0)
+        total_active_subs = tribute_count + mobile_count
 
-    for source, count in referral_stats[:10]:
-        if source:
-            text += f"• {source}: {count} чел\\.\n"
-        else:
-            text += f"• Прямые: {count} чел\\.\n"
+        tribute_revenue = revenue_stats.get('data', {}).get('tribute', {}).get('revenue', 0)
+        mobile_revenue = revenue_stats.get('data', {}).get('mobile', {}).get('revenue', 0)
+        total_revenue = revenue_stats.get('data', {}).get('total', {}).get('revenue', 0)
 
-    await message.reply_text(text, parse_mode='Markdown')
+        text = "👥 **Статистика пользователей:**\n\n"
+        text += f"📱 Всего пользователей: {total_users}\n"
+        text += f"🔄 Активных подписок (30 дней): {total_active_subs}\n"
+        text += f"  • 💳 Tribute: {tribute_count}\n"
+        text += f"  • 📱 Mobile: {mobile_count}\n\n"
+
+        text += f"**Активность пользователей:**\n"
+        text += f"🏋️ Тренировок: {total_activities}\n"
+        text += f"🍽 Приемов пищи: {total_food_intakes}\n"
+        text += f"👣 Записей шагов: {total_steps_records}\n\n"
+
+        text += f"**Доходы (30 дней):**\n"
+        text += f"💰 Всего: {total_revenue:.2f} €\n"
+        text += f"  • Tribute: {tribute_revenue:.2f} €\n"
+        text += f"  • Mobile: {mobile_revenue:.2f} €\n"
+
+        await message.reply_text(text, parse_mode='Markdown')
+
+    except Exception as e:
+        logger.error(f"Error getting user stats: {e}")
+        logger.exception("Full traceback:")
+        await message.reply_text(f"❌ Ошибка получения статистики: {str(e)}")
 
 
 async def cancel_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
