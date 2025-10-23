@@ -22,16 +22,9 @@ async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.answer()
 
     user = query.from_user
-
-    # Проверяем что пользователь привязал аккаунт
-    from bot.database import db_manager
     db_user = await db_manager.get_user(user.id)
 
-    if not db_user:
-        await query.message.edit_text("❌ Используйте /start")
-        return
-
-    if not db_user.api_token:
+    if not db_user or not db_user.api_token:
         keyboard = [
             [InlineKeyboardButton("🔗 Сначала свяжите аккаунт", callback_data="link_account")],
             [InlineKeyboardButton("🔙 Назад", callback_data="start")]
@@ -43,8 +36,7 @@ async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     order_id = str(uuid.uuid4())[:8]
-
-    selected_package = SUBSCRIPTION_PACKAGES[0]  # По умолчанию 1 месяц
+    selected_package = SUBSCRIPTION_PACKAGES[0]
 
     try:
         await api_client.create_pending_payment(
@@ -56,12 +48,9 @@ async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE)
             coins_amount=selected_package['coins'],
             duration_days=selected_package['days']
         )
-
         logger.info(f"📝 Created pending payment {order_id} for user {user.id}")
     except Exception as e:
         logger.error(f"❌ Failed to create pending payment: {e}")
-        await query.message.edit_text("❌ Ошибка создания платежа. Попробуйте позже.")
-        return
 
     text = f"""💳 **LightWeight PAY**
 
@@ -77,13 +66,17 @@ async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE)
 **Как купить:**
 1️⃣ Нажмите кнопку "💳 Открыть магазин Tribute"
 2️⃣ Выберите нужный период подписки
-3️⃣ Добавьте удобный для вас способ оплаты и оплатите покупку
+3️⃣ Добавьте удобный способ оплаты и оплатите
 
 ⚡️ Монеты зачислятся автоматически в течение 2 минут!
+
+**Если передумали:**
+Просто выберите другой тариф в магазине - изменения сохранятся автоматически!
 """
 
     keyboard = [
         [InlineKeyboardButton("💳 Открыть магазин Tribute", url=TRIBUTE_STORE_LINK)],
+        [InlineKeyboardButton("🔄 Проверить статус", callback_data=f"check_payment_{order_id}")],
         [InlineKeyboardButton("🔙 Назад", callback_data="start")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
