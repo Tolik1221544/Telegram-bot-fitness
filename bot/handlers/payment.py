@@ -67,7 +67,6 @@ async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE)
     keyboard = [
         [InlineKeyboardButton("💳 Открыть магазин Tribute", url=TRIBUTE_STORE_LINK)],
         [InlineKeyboardButton("🔄 Проверить статус платежа", callback_data="check_payment")],
-        [InlineKeyboardButton("📊 История платежей", callback_data="payment_history")],
         [InlineKeyboardButton("🔙 Назад", callback_data="start")]
     ]
 
@@ -148,8 +147,11 @@ async def show_completed_payment(query, payment):
     amount = payment.get('amount', 0)
     coins = payment.get('coinsAmount', 0)
     package_name = payment.get('packageName', 'Подписка')
+    currency = payment.get('currency', 'EUR').upper()
 
-    # Определяем название по сумме если не указано
+    if amount > 100:
+        amount = amount / 100
+
     if package_name == 'Подписка' or not package_name:
         for pkg in SUBSCRIPTION_PACKAGES:
             if pkg['price'] == amount:
@@ -157,10 +159,9 @@ async def show_completed_payment(query, payment):
                 break
 
     text = f"""✅ **Платёж успешно обработан!**
-
-📦 **Пакет:** {package_name}
-💰 **Начислено монет:** {coins}
-💵 **Сумма:** {amount} EUR
+📦 Пакет: {package_name}
+💰 Начислено монет: {coins}
+💵 Сумма: {amount:.2f} {currency}
 
 Спасибо за покупку! 🎉
 
