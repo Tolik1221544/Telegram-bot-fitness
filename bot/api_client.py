@@ -134,6 +134,14 @@ class APIClient:
             'GET',
             f'/api/payment/check/{order_id}'
         )
+
+    async def check_payment_by_telegram_id(self, telegram_id: int) -> Dict:
+        """Check payment status by Telegram ID instead of order ID"""
+        return await self._request(
+            'GET',
+            f'/api/payment/check-by-telegram/{telegram_id}'
+        )
+
     async def create_pending_payment(self, order_id: str, telegram_id: int, amount: float,
                                      currency: str, package_id: str, coins_amount: int, duration_days: int):
         """Create pending payment on backend"""

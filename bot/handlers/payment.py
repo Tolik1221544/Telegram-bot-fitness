@@ -80,49 +80,40 @@ async def check_payment_status(update: Update, context: ContextTypes.DEFAULT_TYP
     user = query.from_user
 
     try:
-        status = await api_client.check_payment_status(user.id)
+        # ВАЖНО: Используем специальный эндпоинт для проверки по Telegram ID
+        from bot.api_client import api_client
 
-        logger.info(f"Payment status response: {status}")
+        # Вызываем правильный эндпоинт на бэкенде
+        response = await api_client._request(
+            'GET',
+            f'/api/payment/check-by-telegram/{user.id}'
+        )
 
-        if not status.get('success'):
-            await show_error(query, "Ошибка проверки статуса")
+        logger.info(f"Payment status response: {response}")
+
+        if not response.get('success'):
+            await show_error(query, response.get('message', 'Ошибка проверки статуса'))
             return
 
-        last_payment = status.get('lastPayment', {})
-        payment_status = last_payment.get('status', status.get('status'))
+        # Проверяем есть ли вообще платежи
+        if not response.get('hasPayments'):
+            await show_no_payments(query)
+            return
 
-        metadata = None
-        if last_payment.get('metadata'):
-            try:
-                metadata = json.loads(last_payment['metadata'])
-            except:
-                pass
-
-        if metadata:
-            operation_type = metadata.get('Type', '')
-
-            if 'tariff_upgrade' in operation_type:
-                await show_tariff_upgrade(query, metadata, last_payment)
-                return
-            elif 'tariff_downgrade' in operation_type:
-                await show_tariff_downgrade(query, metadata, last_payment)
-                return
+        # Проверяем статус последнего платежа
+        last_payment = response.get('lastPayment', {})
+        payment_status = last_payment.get('status', response.get('status'))
 
         if payment_status == 'completed':
             await show_completed_payment(query, last_payment)
-
         elif payment_status == 'pending':
             await show_pending_payment(query, last_payment)
-
         elif payment_status == 'expired':
             await show_expired_payment(query)
-
         elif payment_status == 'duplicate':
             await show_duplicate_payment(query)
-
-        elif not status.get('hasPayments'):
-            await show_no_payments(query)
-
+        elif payment_status == 'failed':
+            await show_error(query, "Платёж не удался")
         else:
             await show_unknown_status(query, payment_status)
 
