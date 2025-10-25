@@ -39,34 +39,34 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if referral_code:
             await track_referral(referral_code, user.id)
 
-        welcome_text = f"""🎉 Добро пожаловать в LightweightPay Bot!
+        welcome_text = f"""🎉 *Добро пожаловать в LightweightPay Bot\\!*
 
-Что умеет этот бот:
+*Что умеет этот бот:*
 💰 Управление монетами и подписками
-📊 Просмотр статистики
+📊 Просмотр статистики  
 🔄 Восстановление покупок
 💳 Покупка подписок из России
 
-Для начала работы свяжите аккаунт с приложением."""
+*Для начала работы свяжите аккаунт с приложением\\.*"""
     else:
-        welcome_text = f"👋 С возвращением, {user.first_name}!\n\n"
+        welcome_text = f"👋 *С возвращением, {user.first_name}\\!*\n\n"
 
         # Update balance if user is linked
         if db_user.api_token:
             try:
                 balance = await api_client.get_balance(db_user.api_token)
-                welcome_text += f"💰 Ваш баланс: {balance.get('balance', 0)} монет\n"
+                welcome_text += f"💰 *Ваш баланс:* `{balance.get('balance', 0)}` монет\n"
 
                 if balance.get('hasActiveSubscription'):
                     expiry = balance.get('subscriptionExpiresAt', '')
                     if expiry and len(expiry) >= 10:
                         expiry = expiry[:10]
-                        welcome_text += f"📅 Подписка до: {expiry}\n"
+                        welcome_text += f"📅 *Подписка до:* `{expiry}`\n"
             except Exception as e:
                 logger.error(f"Error getting balance: {e}")
-                welcome_text += "Ваш баланс: загружается...\n"
+                welcome_text += "💰 *Ваш баланс:* загружается\\.\\.\\.\n"
         else:
-            welcome_text += "Ваш баланс: загружается...\n"
+            welcome_text += "💰 *Ваш баланс:* загружается\\.\\.\\.\n"
 
     # Main menu keyboard
     keyboard = [
@@ -86,7 +86,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         welcome_text,
-        reply_markup=reply_markup
+        reply_markup=reply_markup,
+        parse_mode='MarkdownV2'
     )
 
 
@@ -106,25 +107,25 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         balance = await api_client.get_balance(db_user.api_token)
 
-        text = f"""💰 **Ваш баланс**
+        text = f"""💰 *Ваш баланс*
 
-Монет: {balance.get('balance', 0)}
+*Монет:* `{balance.get('balance', 0)}`
 """
 
         if balance.get('hasActiveSubscription'):
             expiry = balance.get('subscriptionExpiresAt', '')
             if expiry and len(expiry) >= 10:
                 expiry = expiry[:10]
-            text += f"\n📅 Подписка до: {expiry}"
+            text += f"\n📅 *Подписка до:* `{expiry}`"
         else:
-            text += "\n📅 Подписка: не активна"
+            text += "\n📅 *Подписка:* не активна"
 
         keyboard = [[InlineKeyboardButton("💳 Купить подписку", callback_data="subscriptions")]]
 
         await update.message.reply_text(
             text,
             reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
+            parse_mode='MarkdownV2'
         )
 
     except Exception as e:
@@ -133,7 +134,7 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /subscribe command"""
+    """Handle /subscribe command - показывает меню подписок"""
     user = update.effective_user
     db_user = await db_manager.get_user(user.id)
 
@@ -144,59 +145,74 @@ async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not db_user.api_token:
         keyboard = [[InlineKeyboardButton("🔗 Связать аккаунт", callback_data="link_account")]]
         await update.message.reply_text(
-            "❌ Сначала свяжите аккаунт с приложением",
+            "❌ Для покупки подписки сначала нужно связать аккаунт с приложением.",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
 
-    # Show subscription packages
-    from bot.handlers.payment import SUBSCRIPTION_PACKAGES
+    # Показываем то же самое меню, что и кнопка "Подписки"
+    text = """💳 *LightWeight PAY*
 
-    keyboard = []
+Здесь вы можете купить LW coins со скидкой, оплатить картой любой страны и любым удобным способом\\.
 
-    for package in SUBSCRIPTION_PACKAGES:
-        button_text = f"{package['name']} - {package['price']} {package['currency']}"
-        if package.get('savings'):
-            button_text += f" (скидка {package['savings']})"
-        callback_data = f"buy_package_{package['id']}"
-        keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+📋 *Доступные тарифы:*
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
+• *1 месяц — 2 €*
+   → _100 монет на 30 дней_
+• *3 месяца — 5 €*
+   → _300 монет на 90 дней_
+• *6 месяцев — 10 €*
+   → _600 монет на 180 дней_
+• *Год — 20 €*
+   → _1200 монет на 365 дней_
 
-    text = """💳 **LightWeight PAY**
+*💡 Как купить:*
+1️⃣ Нажмите кнопку "💳 Открыть магазин Tribute"
+2️⃣ Выберите нужный период подписки
+3️⃣ Добавьте удобный для вас способ оплаты и оплатите
 
-Здесь вы можете купить LW coins со скидкой, оплатить картой любой страны и любым удобным способом
+⚡️ Монеты зачислятся автоматически в течение 2 минут\\!"""
 
-**Выберите период подписки:**"""
+    TRIBUTE_STORE_LINK = "https://t.me/tribute/app?startapp=sDlI"
 
-    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+    keyboard = [
+        [InlineKeyboardButton("💳 Открыть магазин Tribute", url=TRIBUTE_STORE_LINK)],
+        [InlineKeyboardButton("🔄 Проверить статус платежа", callback_data="check_payment")],
+        [InlineKeyboardButton("🔙 Назад в меню", callback_data="start")]
+    ]
+
+    await update.message.reply_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='MarkdownV2'
+    )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command"""
-    help_text = """📖 **Помощь по боту**
+    help_text = """📖 *Помощь по боту*
 
-**Основные команды:**
-/start - Главное меню
-/help - Эта справка
-/balance - Проверить баланс
-/subscribe - Купить подписку
-/admin - Админ панель (для админов)
+*Основные команды:*
+/start \\- Главное меню
+/help \\- Эта справка
+/balance \\- Проверить баланс
+/subscribe \\- Купить подписку
+/admin \\- Админ панель \\(для админов\\)
 
-**Как связать аккаунт:**
-1. Нажмите "🔗 Связать аккаунт"
-2. Введите email от приложения
-3. Введите код подтверждения
+*Как связать аккаунт:*
+1\\. Нажмите "🔗 Связать аккаунт"
+2\\. Введите email от приложения
+3\\. Введите код подтверждения
 
-**Покупка подписки:**
-1. Нажмите /subscribe или "💳 Подписки"
-2. Выберите пакет
-3. Оплатите через Tribute
+*Покупка подписки:*
+1\\. Нажмите /subscribe или "💳 Подписки"
+2\\. Выберите пакет
+3\\. Оплатите через Tribute
 
-**Проблемы?**
+*Проблемы?*
 Напишите в поддержку @support"""
 
-    await update.message.reply_text(help_text, parse_mode='Markdown')
+    await update.message.reply_text(help_text, parse_mode='MarkdownV2')
 
 
 async def track_coin_usage(telegram_id: int, amount: int, feature: str, description: str = None):

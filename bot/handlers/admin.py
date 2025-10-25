@@ -42,14 +42,14 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats_text = await get_admin_stats()
 
     await update.message.reply_text(
-        f"⚙️ **Админ панель**\n\n{stats_text}",
+        stats_text,
         reply_markup=reply_markup,
-        parse_mode='Markdown'
+        parse_mode='MarkdownV2'
     )
 
 
 async def get_admin_stats():
-    """Get admin statistics"""
+    """Get admin statistics with beautiful formatting"""
     async with db_manager.SessionLocal() as session:
         total_users = await session.execute(select(func.count(User.id)))
         total_users = total_users.scalar()
@@ -73,11 +73,23 @@ async def get_admin_stats():
         )
         today_revenue = today_payments.scalar() or 0
 
-        return f"""📊 Статистика:
-👥 Всего пользователей: {total_users}
-🟢 Активных \\(7 дней\\): {active_users}
-💰 Общий доход: {total_revenue:.2f} €
-📅 Доход сегодня: {today_revenue:.2f} €"""
+        # Escape special characters for MarkdownV2
+        def escape_md(text):
+            special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+            for char in special_chars:
+                text = str(text).replace(char, f'\\{char}')
+            return text
+
+        return f"""⚙️ *Админ панель*
+
+📊 *Статистика:*
+
+👥 *Всего пользователей:* `{total_users}`
+🟢 *Активных \\(7 дней\\):* `{active_users}`
+
+💰 *Финансы:*
+💵 Общий доход: `{escape_md(f'{total_revenue:.2f}')} €`
+📅 Доход сегодня: `{escape_md(f'{today_revenue:.2f}')} €`"""
 
 
 async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -97,16 +109,20 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     if query.data == "admin_set_reg_coins":
         await query.message.reply_text(
-            f"💰 Введите новое количество монет при регистрации\n"
-            f"Текущее: {config.DEFAULT_REGISTRATION_COINS}\n\n"
-            f"Или /cancel для отмены"
+            f"💰 *Установка бонуса регистрации*\n\n"
+            f"Текущее значение: `{config.DEFAULT_REGISTRATION_COINS}` монет\n\n"
+            f"Введите новое количество монет:\n\n"
+            f"_Или /cancel для отмены_",
+            parse_mode='MarkdownV2'
         )
         return ADMIN_SET_REG_COINS
 
     elif query.data == "admin_set_user_coins":
         await query.message.reply_text(
-            "💸 Введите email пользователя:\n\n"
-            "Или /cancel для отмены"
+            "💸 *Установка монет пользователю*\n\n"
+            "Введите email пользователя:\n\n"
+            "_Или /cancel для отмены_",
+            parse_mode='MarkdownV2'
         )
         return ADMIN_SET_USER_EMAIL
 
@@ -120,9 +136,11 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif query.data == "admin_create_referral":
         await query.message.reply_text(
-            "🔗 Введите название для реферальной ссылки\n"
-            "Например: Фитнес-центр Москва\n\n"
-            "Или /cancel для отмены"
+            "🔗 *Создание реферальной ссылки*\n\n"
+            "Введите название для реферальной ссылки\n"
+            "_Например: Фитнес\\-центр Москва_\n\n"
+            "_Или /cancel для отмены_",
+            parse_mode='MarkdownV2'
         )
         return ADMIN_CREATE_REFERRAL
 
@@ -145,17 +163,24 @@ async def set_registration_coins(update: Update, context: ContextTypes.DEFAULT_T
 
         config.DEFAULT_REGISTRATION_COINS = coins
 
-        keyboard = [[InlineKeyboardButton("🔙 В админ панель", callback_data="admin")]]
+        keyboard = [
+            [InlineKeyboardButton("🔙 Назад", callback_data="admin")]
+        ]
 
         await update.message.reply_text(
-            f"✅ Бонус регистрации установлен: {coins} монет",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            f"✅ *Бонус регистрации обновлен*\n\n"
+            f"Новое значение: `{coins}` монет",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='MarkdownV2'
         )
     except ValueError:
-        keyboard = [[InlineKeyboardButton("❌ Отменить", callback_data="admin")]]
+        keyboard = [
+            [InlineKeyboardButton("🔙 Назад", callback_data="admin")]
+        ]
         await update.message.reply_text(
-            "❌ Введите корректное число",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "❌ *Ошибка*\n\nВведите корректное число",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='MarkdownV2'
         )
         return ADMIN_SET_REG_COINS
 
@@ -166,21 +191,33 @@ async def set_user_coins_email(update: Update, context: ContextTypes.DEFAULT_TYP
     email = update.message.text.strip()
 
     if '@' not in email or '.' not in email:
-        keyboard = [[InlineKeyboardButton("❌ Отменить", callback_data="admin")]]
+        keyboard = [
+            [InlineKeyboardButton("🔙 Назад", callback_data="admin")]
+        ]
         await update.message.reply_text(
-            "❌ Неверный формат email. Попробуйте снова:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "❌ *Неверный формат email*\n\nПопробуйте снова:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='MarkdownV2'
         )
         return ADMIN_SET_USER_EMAIL
 
     context.user_data['admin_target_email'] = email
 
-    keyboard = [[InlineKeyboardButton("❌ Отменить", callback_data="admin")]]
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад", callback_data="admin")]
+    ]
+
+    def escape_md(text):
+        special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+        for char in special_chars:
+            text = str(text).replace(char, f'\\{char}')
+        return text
 
     await update.message.reply_text(
-        f"📧 Email: {email}\n"
+        f"📧 *Email:* `{escape_md(email)}`\n\n"
         "💰 Теперь введите количество монет:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='MarkdownV2'
     )
     return ADMIN_SET_USER_AMOUNT
 
@@ -196,14 +233,25 @@ async def set_user_coins_amount(update: Update, context: ContextTypes.DEFAULT_TY
             await update.message.reply_text("❌ Ошибка: email не найден. Начните заново: /admin")
             return ConversationHandler.END
 
-        keyboard = [[InlineKeyboardButton("🔙 В админ панель", callback_data="admin")]]
+        keyboard = [
+            [InlineKeyboardButton("🔙 Назад", callback_data="admin")],
+        ]
 
         # Send verification code
         success = await api_client.send_verification_code(email)
         if not success:
+            def escape_md(text):
+                special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.',
+                                 '!']
+                for char in special_chars:
+                    text = str(text).replace(char, f'\\{char}')
+                return text
+
             await update.message.reply_text(
-                f"❌ Пользователь {email} не найден",
-                reply_markup=InlineKeyboardMarkup(keyboard)
+                f"❌ *Пользователь не найден*\n\n"
+                f"Email: `{escape_md(email)}`",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='MarkdownV2'
             )
             return ConversationHandler.END
 
@@ -222,29 +270,60 @@ async def set_user_coins_amount(update: Update, context: ContextTypes.DEFAULT_TY
             # Set balance
             await api_client.set_balance(token, coins, 'admin')
 
+            def escape_md(text):
+                special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.',
+                                 '!']
+                for char in special_chars:
+                    text = str(text).replace(char, f'\\{char}')
+                return text
+
             await update.message.reply_text(
-                f"✅ Установлено {coins} монет для {email}",
-                reply_markup=InlineKeyboardMarkup(keyboard)
+                f"✅ *Монеты установлены*\n\n"
+                f"📧 Email: `{escape_md(email)}`\n"
+                f"💰 Монет: `{coins}`",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='MarkdownV2'
             )
         else:
+            def escape_md(text):
+                special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.',
+                                 '!']
+                for char in special_chars:
+                    text = str(text).replace(char, f'\\{char}')
+                return text
+
             await update.message.reply_text(
-                f"📧 Код отправлен на {email}\n",
-                reply_markup=InlineKeyboardMarkup(keyboard)
+                f"📧 *Код отправлен*\n\n`{escape_md(email)}`",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='MarkdownV2'
             )
 
     except ValueError:
-        keyboard = [[InlineKeyboardButton("❌ Отменить", callback_data="admin")]]
+        keyboard = [
+            [InlineKeyboardButton("🔙 Назад", callback_data="admin")]
+        ]
         await update.message.reply_text(
-            "❌ Введите корректное число",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "❌ *Ошибка*\n\nВведите корректное число",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='MarkdownV2'
         )
         return ADMIN_SET_USER_AMOUNT
     except Exception as e:
         logger.error(f"Error setting user coins: {e}")
-        keyboard = [[InlineKeyboardButton("🔙 В админ панель", callback_data="admin")]]
+        keyboard = [
+            [InlineKeyboardButton("🔙 Назад", callback_data="admin")],
+        ]
+
+        def escape_md(text):
+            special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+            for char in special_chars:
+                text = str(text).replace(char, f'\\{char}')
+            return text
+
         await update.message.reply_text(
-            f"❌ Ошибка: {e}",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            f"❌ *Ошибка*\n\n`{escape_md(str(e))}`",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='MarkdownV2'
         )
     finally:
         # Cleanup
@@ -258,12 +337,15 @@ async def create_referral_link(update: Update, context: ContextTypes.DEFAULT_TYP
     """Create new referral link"""
     name = update.message.text.strip()
 
-    keyboard = [[InlineKeyboardButton("🔙 В админ панель", callback_data="admin")]]
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад", callback_data="admin")],
+    ]
 
     if not name:
         await update.message.reply_text(
-            "❌ Название не может быть пустым",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "❌ *Ошибка*\n\nНазвание не может быть пустым",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='MarkdownV2'
         )
         return ConversationHandler.END
 
@@ -281,13 +363,19 @@ async def create_referral_link(update: Update, context: ContextTypes.DEFAULT_TYP
     bot_username = config.BOT_USERNAME.replace('@', '')
     link_url = f"https://t.me/{bot_username}?start={code}"
 
+    def escape_md(text):
+        special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+        for char in special_chars:
+            text = str(text).replace(char, f'\\{char}')
+        return text
+
     await update.message.reply_text(
-        f"✅ Реферальная ссылка создана!\n\n"
-        f"📝 Название: {name}\n"
-        f"🔗 Ссылка: `{link_url}`\n"
-        f"📊 Код: {code}\n\n"
-        f"Отправьте эту ссылку партнерам для отслеживания",
-        parse_mode='Markdown',
+        f"✅ *Реферальная ссылка создана\\!*\n\n"
+        f"📝 *Название:* {escape_md(name)}\n"
+        f"🆔 *Код:* `{code}`\n"
+        f"🔗 *Ссылка:*\n`{escape_md(link_url)}`\n\n"
+        f"_Отправьте эту ссылку партнерам для отслеживания_",
+        parse_mode='MarkdownV2',
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -376,10 +464,19 @@ async def send_spending_chart(message):
 
             await message.reply_photo(
                 photo=photo,
-                caption=f"📊 График трат монет за 30 дней\n\n"
-                        f"💸 Всего потрачено: {total_spent} монет\n"
-                        f"📅 Дней с активностью: {len(daily_stats)}"
+                caption=f"📊 *График трат монет за 30 дней*\n\n"
+                        f"💸 *Всего потрачено:* `{total_spent}` монет\n"
+                        f"📅 *Дней с активностью:* `{len(daily_stats)}`",
+                parse_mode='MarkdownV2'
             )
+
+        # Отправляем отдельное сообщение с кнопкой
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin")]]
+        await message.reply_text(
+            "_Нажмите кнопку ниже для возврата_",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='MarkdownV2'
+        )
 
         os.remove(chart_path)
         logger.info("✅ Spending chart sent successfully")
@@ -465,12 +562,28 @@ async def send_revenue_chart(message):
                 for stat in daily_revenue
             )
 
+            def escape_md(text):
+                special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.',
+                                 '!']
+                for char in special_chars:
+                    text = str(text).replace(char, f'\\{char}')
+                return text
+
             await message.reply_photo(
                 photo=photo,
-                caption=f"📈 График доходов за 30 дней\n\n"
-                        f"💰 Всего: {total_revenue:.2f} €\n"
-                        f"📅 Дней с платежами: {len(daily_revenue)}"
+                caption=f"📈 *График доходов за 30 дней*\n\n"
+                        f"💰 *Всего:* `{escape_md(f'{total_revenue:.2f}')} €`\n"
+                        f"📅 *Дней с платежами:* `{len(daily_revenue)}`",
+                parse_mode='MarkdownV2'
             )
+
+        # Отправляем отдельное сообщение с кнопкой
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin")]]
+        await message.reply_text(
+            "_Нажмите кнопку ниже для возврата_",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='MarkdownV2'
+        )
 
         os.remove(chart_path)
         logger.info("✅ Revenue chart sent successfully")
@@ -492,22 +605,39 @@ async def show_referral_links(message):
         links = result.scalars().all()
 
     if not links:
-        await message.reply_text("📋 Нет активных реферальных ссылок")
+        keyboard = [
+            [InlineKeyboardButton("🔙 Назад", callback_data="admin")],
+        ]
+        await message.reply_text(
+            "📋 Нет активных реферальных ссылок",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         return
 
     bot_username = config.BOT_USERNAME.replace('@', '')
-    text = "📋 **Реферальные ссылки:**\n\n"
+
+    def escape_md(text):
+        special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+        for char in special_chars:
+            text = str(text).replace(char, f'\\{char}')
+        return text
+
+    text = "📋 *Реферальные ссылки:*\n\n"
 
     for link in links[:10]:
         link_url = f"https://t.me/{bot_username}?start={link.code}"
-        text += f"**{link.name}**\n"
-        text += f"🔗 `{link_url}`\n"
-        text += f"👁 Переходов: {link.clicks}\n"
-        text += f"👤 Регистраций: {link.registrations}\n"
-        text += f"💰 Покупок: {link.purchases}\n"
-        text += f"💵 Доход: {link.total_revenue:.2f} €\n\n"
+        text += f"*{escape_md(link.name)}*\n"
+        text += f"🔗 `{escape_md(link_url)}`\n"
+        text += f"👁 Переходов: `{link.clicks}`\n"
+        text += f"👤 Регистраций: `{link.registrations}`\n"
+        text += f"💰 Покупок: `{link.purchases}`\n"
+        text += f"💵 Доход: `{escape_md(f'{link.total_revenue:.2f}')} €`\n\n"
 
-    await message.reply_text(text, parse_mode='Markdown')
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад", callback_data="admin")],
+    ]
+
+    await message.reply_text(text, parse_mode='MarkdownV2', reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def show_user_stats(message):
@@ -520,7 +650,13 @@ async def show_user_stats(message):
     admin_user = await db_manager.get_user(user_id)
 
     if not admin_user or not admin_user.api_token:
-        await message.reply_text("❌ Сначала привяжите аккаунт через /start")
+        keyboard = [
+            [InlineKeyboardButton("🔙 Назад", callback_data="admin")],
+        ]
+        await message.reply_text(
+            "❌ Сначала привяжите аккаунт через /start",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         return
 
     try:
@@ -553,35 +689,54 @@ async def show_user_stats(message):
         mobile_revenue = revenue_stats.get('data', {}).get('mobile', {}).get('revenue', 0)
         total_revenue = revenue_stats.get('data', {}).get('total', {}).get('revenue', 0)
 
-        text = "👥 **Статистика пользователей:**\n\n"
-        text += f"📱 Всего пользователей: {total_users}\n"
-        text += f"🔄 Активных подписок (30 дней): {total_active_subs}\n"
-        text += f"  • 💳 Tribute: {tribute_count}\n"
-        text += f"  • 📱 Mobile: {mobile_count}\n\n"
+        def escape_md(text):
+            special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+            for char in special_chars:
+                text = str(text).replace(char, f'\\{char}')
+            return text
 
-        text += f"**Активность пользователей:**\n"
-        text += f"🏋️ Тренировок: {total_activities}\n"
-        text += f"🍽 Приемов пищи: {total_food_intakes}\n"
-        text += f"👣 Записей шагов: {total_steps_records}\n\n"
+        text = "👥 *Статистика пользователей*\n\n"
+        text += f"📱 *Всего пользователей:* `{total_users}`\n"
+        text += f"🔄 *Активных подписок \\(30 дней\\):* `{total_active_subs}`\n"
+        text += f"  • 💳 Tribute: `{tribute_count}`\n"
+        text += f"  • 📱 Mobile: `{mobile_count}`\n\n"
 
-        text += f"**Доходы (30 дней):**\n"
-        text += f"💰 Всего: {total_revenue:.2f} €\n"
-        text += f"  • Tribute: {tribute_revenue:.2f} €\n"
-        text += f"  • Mobile: {mobile_revenue:.2f} €\n"
+        text += f"*Активность пользователей:*\n"
+        text += f"🏋️ Тренировок: `{total_activities}`\n"
+        text += f"🍽 Приемов пищи: `{total_food_intakes}`\n"
+        text += f"👣 Записей шагов: `{total_steps_records}`\n\n"
 
-        await message.reply_text(text, parse_mode='Markdown')
+        text += f"*Доходы \\(30 дней\\):*\n"
+        text += f"💰 Всего: `{escape_md(f'{total_revenue:.2f}')} €`\n"
+        text += f"  • Tribute: `{escape_md(f'{tribute_revenue:.2f}')} €`\n"
+        text += f"  • Mobile: `{escape_md(f'{mobile_revenue:.2f}')} €`\n"
+
+        keyboard = [
+            [InlineKeyboardButton("🔙 Назад", callback_data="admin")],
+        ]
+
+        await message.reply_text(text, parse_mode='MarkdownV2', reply_markup=InlineKeyboardMarkup(keyboard))
 
     except Exception as e:
         logger.error(f"Error getting user stats: {e}")
         logger.exception("Full traceback:")
-        await message.reply_text(f"❌ Ошибка получения статистики: {str(e)}")
+
+        keyboard = [
+            [InlineKeyboardButton("🔙 Назад", callback_data="admin")],
+        ]
+
+        await message.reply_text(
+            f"❌ Ошибка получения статистики: {str(e)}",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
 
 async def cancel_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     context.user_data.clear()
 
-    keyboard = [[InlineKeyboardButton("🔙 В админ панель", callback_data="admin")]]
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад", callback_data="admin")],
+    ]
 
     await update.message.reply_text(
         "❌ Действие отменено",
@@ -616,10 +771,11 @@ async def admin_callback_button(update: Update, context: ContextTypes.DEFAULT_TY
     stats_text = await get_admin_stats()
 
     await query.message.edit_text(
-        f"⚙️ **Админ панель**\n\n{stats_text}",
+        stats_text,
         reply_markup=reply_markup,
-        parse_mode='Markdown'
+        parse_mode='MarkdownV2'
     )
+
 
 def register_admin_handlers(application):
     application.add_handler(CommandHandler("admin", admin_command))

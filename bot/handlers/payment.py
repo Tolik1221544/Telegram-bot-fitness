@@ -37,28 +37,27 @@ async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
 
-    text = """💳 **LightWeight PAY**
+    text = """💳 *LightWeight PAY*
 
-Здесь вы можете купить LW coins со скидкой, оплатить картой любой страны и любым удобным способом.
+Здесь вы можете купить LW coins со скидкой, оплатить картой любой страны и любым удобным способом\\.
 
-📋 **Доступные тарифы:**
+📋 *Доступные тарифы:*
 
-• **1 месяц — 2 €** → 100 монет на 30 дней
-• **3 месяца — 5 €** → 300 монет на 90 дней  
-• **6 месяцев — 10 €** → 600 монет на 180 дней
-• **Год — 20 €** → 1200 монет на 365 дней
+• *1 месяц — 2 €*
+   → _100 монет на 30 дней_
+• *3 месяца — 5 €*
+   → _300 монет на 90 дней_
+• *6 месяцев — 10 €*
+   → _600 монет на 180 дней_
+• *Год — 20 €*
+   → _1200 монет на 365 дней_
 
-**💡 Как купить:**
+*💡 Как купить:*
 1️⃣ Нажмите кнопку "💳 Открыть магазин Tribute"
-2️⃣ Выберите нужный период подписки  
-3️⃣ Оплатите удобным способом
+2️⃣ Выберите нужный период подписки
+3️⃣ Добавьте удобный для вас способ оплаты и оплатите
 
-⚡️ Монеты зачислятся автоматически в течение 2 минут!
-
-**🔄 Смена тарифа:**
-• При повышении тарифа - добавится разница в монетах
-• При понижении - текущие монеты сохранятся
-"""
+⚡️ Монеты зачислятся автоматически в течение 2 минут\\!"""
 
     keyboard = [
         [InlineKeyboardButton("💳 Открыть магазин Tribute", url=TRIBUTE_STORE_LINK)],
@@ -69,7 +68,7 @@ async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
+        parse_mode='MarkdownV2'
     )
 
 
@@ -81,7 +80,7 @@ async def check_payment_status(update: Update, context: ContextTypes.DEFAULT_TYP
     user = query.from_user
 
     try:
-        status = await api_client.check_payment_by_telegram_id(user.id)
+        status = await api_client.check_payment_status(user.id)
 
         logger.info(f"Payment status response: {status}")
 
@@ -148,14 +147,15 @@ async def show_completed_payment(query, payment):
                 package_name = pkg['name']
                 break
 
-    text = f"""✅ **Платёж успешно обработан!**
-📦 Пакет: {package_name}
-💰 Начислено монет: {coins}
-💵 Сумма: {amount:.2f} {currency}
+    text = f"""✅ *Платёж успешно обработан\\!*
 
-Спасибо за покупку! 🎉
+📦 *Пакет:* {package_name}
+💰 *Начислено монет:* `{coins}`
+💵 *Сумма:* `{amount:.2f} {currency}`
 
-Монеты уже доступны в приложении."""
+Спасибо за покупку\\! 🎉
+
+_Монеты уже доступны в приложении\\._"""
 
     keyboard = [
         [InlineKeyboardButton("🔙 В главное меню", callback_data="start")]
@@ -164,7 +164,7 @@ async def show_completed_payment(query, payment):
     await query.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
+        parse_mode='MarkdownV2'
     )
 
 
@@ -173,13 +173,13 @@ async def show_pending_payment(query, payment):
     amount = payment.get('amount', 0)
     coins = payment.get('coinsAmount', 0)
 
-    text = f"""⏳ **Платёж обрабатывается**
+    text = f"""⏳ *Платёж обрабатывается*
 
-💰 **Ожидаемые монеты:** {coins}
-💵 **Сумма:** {amount} EUR
+💰 *Ожидаемые монеты:* `{coins}`
+💵 *Сумма:* `{amount}` EUR
 
-Платёж будет обработан автоматически в течение 2 минут.
-Нажмите кнопку ниже для повторной проверки."""
+_Платёж будет обработан автоматически в течение 2 минут\\._
+Нажмите кнопку ниже для повторной проверки\\."""
 
     keyboard = [
         [InlineKeyboardButton("🔄 Проверить снова", callback_data="check_payment")],
@@ -189,7 +189,7 @@ async def show_pending_payment(query, payment):
     await query.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
+        parse_mode='MarkdownV2'
     )
 
 
@@ -200,22 +200,22 @@ async def show_tariff_upgrade(query, metadata, payment):
     coins_added = metadata.get('CoinsAdded', 0)
     coins_diff = metadata.get('CoinsDifference', 0)
 
-    text = f"""⬆️ **Тариф успешно повышен!**
+    text = f"""⬆️ *Тариф успешно повышен\\!*
 
-📦 **Было:** {old_package}
-📦 **Стало:** {new_package}
+📦 *Было:* {old_package}
+📦 *Стало:* {new_package}
 
-💰 **Добавлено монет:** +{coins_added}
-📊 **Общая разница:** {coins_diff} монет
+💰 *Добавлено монет:* `\\+{coins_added}`
+📊 *Общая разница:* `{coins_diff}` монет
 
-Спасибо за апгрейд! 🎉"""
+Спасибо за апгрейд\\! 🎉"""
 
     keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data="start")]]
 
     await query.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
+        parse_mode='MarkdownV2'
     )
 
 
@@ -224,29 +224,29 @@ async def show_tariff_downgrade(query, metadata, payment):
     old_package = metadata.get('OldPackage', 'Старый')
     new_package = metadata.get('NewPackage', 'Новый')
 
-    text = f"""⬇️ **Тариф изменён**
+    text = f"""⬇️ *Тариф изменён*
 
-📦 **Было:** {old_package}
-📦 **Стало:** {new_package}
+📦 *Было:* {old_package}
+📦 *Стало:* {new_package}
 
-ℹ️ **Важно:** Ваши текущие монеты сохранены!
-Следующее продление будет по новому тарифу."""
+ℹ️ *Важно:* Ваши текущие монеты сохранены\\!
+_Следующее продление будет по новому тарифу\\._"""
 
     keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data="start")]]
 
     await query.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
+        parse_mode='MarkdownV2'
     )
 
 
 async def show_expired_payment(query):
     """Показать истёкший платёж"""
-    text = """⏰ **Платёж истёк**
+    text = """⏰ *Платёж истёк*
 
-Прошло более 24 часов с момента создания платежа.
-Создайте новый заказ в магазине Tribute."""
+_Прошло более 24 часов с момента создания платежа\\._
+Создайте новый заказ в магазине Tribute\\."""
 
     keyboard = [
         [InlineKeyboardButton("💳 Открыть магазин", url=TRIBUTE_STORE_LINK)],
@@ -256,32 +256,32 @@ async def show_expired_payment(query):
     await query.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
+        parse_mode='MarkdownV2'
     )
 
 
 async def show_duplicate_payment(query):
     """Показать дубликат платежа"""
-    text = """⚠️ **Этот платёж уже обработан**
+    text = """⚠️ *Этот платёж уже обработан*
 
-Монеты уже были начислены на ваш счёт.
-Проверьте баланс в приложении."""
+_Монеты уже были начислены на ваш счёт\\._
+Проверьте баланс в приложении\\."""
 
     keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data="start")]]
 
     await query.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
+        parse_mode='MarkdownV2'
     )
 
 
 async def show_no_payments(query):
     """Показать отсутствие платежей"""
-    text = """ℹ️ **У вас пока нет платежей**
+    text = """ℹ️ *У вас пока нет платежей*
 
 Хотите приобрести подписку?
-Нажмите кнопку ниже для перехода в магазин."""
+Нажмите кнопку ниже для перехода в магазин\\."""
 
     keyboard = [
         [InlineKeyboardButton("💳 Купить подписку", url=TRIBUTE_STORE_LINK)],
@@ -291,17 +291,17 @@ async def show_no_payments(query):
     await query.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
+        parse_mode='MarkdownV2'
     )
 
 
 async def show_unknown_status(query, status):
     """Показать неизвестный статус"""
-    text = f"""❓ **Неизвестный статус платежа**
+    text = f"""❓ *Неизвестный статус платежа*
 
-Статус: {status}
+_Статус:_ `{status}`
 
-Попробуйте проверить позже или обратитесь в поддержку."""
+Попробуйте проверить позже или обратитесь в поддержку\\."""
 
     keyboard = [
         [InlineKeyboardButton("🔄 Проверить снова", callback_data="check_payment")],
@@ -311,22 +311,22 @@ async def show_unknown_status(query, status):
     await query.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
+        parse_mode='MarkdownV2'
     )
 
 
 async def show_error(query, message):
     """Показать ошибку"""
-    text = f"""❌ **{message}**
+    text = f"""❌ *{message}*
 
-Попробуйте позже или обратитесь в поддержку."""
+Попробуйте позже или обратитесь в поддержку\\."""
 
     keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="subscriptions")]]
 
     await query.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
+        parse_mode='MarkdownV2'
     )
 
 def register_payment_handlers(application):
