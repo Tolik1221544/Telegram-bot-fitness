@@ -228,8 +228,7 @@ async def set_user_coins_amount(update: Update, context: ContextTypes.DEFAULT_TY
             )
         else:
             await update.message.reply_text(
-                f"📧 Код отправлен на {email}\n"
-                f"Пользователь должен подтвердить в приложении",
+                f"📧 Код отправлен на {email}\n",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
 

@@ -8,10 +8,8 @@ from bot.api_client import api_client
 
 logger = logging.getLogger(__name__)
 
-# Константы
 TRIBUTE_STORE_LINK = "https://t.me/tribute/app?startapp=sDlI"
 
-# Фиксированные пакеты подписок
 SUBSCRIPTION_PACKAGES = [
     {'id': '1month', 'name': '1 месяц', 'coins': 100, 'days': 30, 'price': 2},
     {'id': '3months', 'name': '3 месяца', 'coins': 300, 'days': 90, 'price': 5},
@@ -28,7 +26,6 @@ async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user = query.from_user
     db_user = await db_manager.get_user(user.id)
 
-    # Проверка связки аккаунта
     if not db_user or not db_user.api_token:
         keyboard = [
             [InlineKeyboardButton("🔗 Сначала свяжите аккаунт", callback_data="link_account")],
@@ -40,7 +37,6 @@ async def show_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
 
-    # Текст с информацией о подписках
     text = """💳 **LightWeight PAY**
 
 Здесь вы можете купить LW coins со скидкой, оплатить картой любой страны и любым удобным способом.
@@ -85,7 +81,6 @@ async def check_payment_status(update: Update, context: ContextTypes.DEFAULT_TYP
     user = query.from_user
 
     try:
-        # Запрос к API
         status = await api_client.check_payment_by_telegram_id(user.id)
 
         logger.info(f"Payment status response: {status}")
@@ -94,11 +89,9 @@ async def check_payment_status(update: Update, context: ContextTypes.DEFAULT_TYP
             await show_error(query, "Ошибка проверки статуса")
             return
 
-        # Получаем данные последнего платежа
         last_payment = status.get('lastPayment', {})
         payment_status = last_payment.get('status', status.get('status'))
 
-        # Парсим метаданные если есть
         metadata = None
         if last_payment.get('metadata'):
             try:
@@ -106,11 +99,9 @@ async def check_payment_status(update: Update, context: ContextTypes.DEFAULT_TYP
             except:
                 pass
 
-        # Обработка разных типов операций
         if metadata:
             operation_type = metadata.get('Type', '')
 
-            # Обработка смены тарифа
             if 'tariff_upgrade' in operation_type:
                 await show_tariff_upgrade(query, metadata, last_payment)
                 return
@@ -118,7 +109,6 @@ async def check_payment_status(update: Update, context: ContextTypes.DEFAULT_TYP
                 await show_tariff_downgrade(query, metadata, last_payment)
                 return
 
-        # Обработка обычных платежей
         if payment_status == 'completed':
             await show_completed_payment(query, last_payment)
 
@@ -168,7 +158,6 @@ async def show_completed_payment(query, payment):
 Монеты уже доступны в приложении."""
 
     keyboard = [
-        [InlineKeyboardButton("📊 История платежей", callback_data="payment_history")],
         [InlineKeyboardButton("🔙 В главное меню", callback_data="start")]
     ]
 
